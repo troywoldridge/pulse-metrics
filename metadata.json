@@ -1,0 +1,6 @@
+{
+  "name": "PulseMetrics - Real-Time Server & Linux PC Monitoring",
+  "description": "High-precision real-time server and Linux PC monitoring dashboard featuring tactile analog dials, SVG vector gauges, SSH streaming, and WebSocket telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
