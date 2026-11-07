@@ -42,6 +42,91 @@ Production runtime and migration URLs must use TLS with certificate and
 hostname verification (for example, `sslmode=verify-full` with a trusted CA).
 A hostname mismatch or untrusted certificate must fail closed.
 
+## Explicit role and grant plan
+
+The following is the initial local-development role model. Run role creation as
+a PostgreSQL administrator against the dedicated `pulse_metrics` database.
+Choose passwords interactively with psql's `\\password` command; never put
+passwords in this document, shell history, source control, or connection URLs
+that may be logged.
+
+Create the two login roles:
+
+```sql
+CREATE ROLE pulse_metrics_migrator
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+
+CREATE ROLE pulse_metrics_app
+  LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+
+GRANT CONNECT ON DATABASE pulse_metrics
+  TO pulse_metrics_migrator, pulse_metrics_app;
+
+GRANT USAGE, CREATE ON SCHEMA public TO pulse_metrics_migrator;
+GRANT USAGE ON SCHEMA public TO pulse_metrics_app;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+  REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+  REVOKE ALL ON SEQUENCES FROM PUBLIC;
+```
+
+Then, in the same psql session, set passwords interactively:
+
+```text
+\\password pulse_metrics_migrator
+\\password pulse_metrics_app
+```
+
+Use `pulse_metrics_migrator` only for reviewed Drizzle migrations. Objects
+created by this role are owned by it; the API must never use this connection.
+
+After the reviewed migration has been applied, grant the ordinary API role
+only the initial read and append operations:
+
+```sql
+GRANT SELECT ON
+  public.organizations,
+  public.users,
+  public.organization_memberships,
+  public.monitored_agents,
+  public.telemetry_samples,
+  public.audit_events
+TO pulse_metrics_app;
+
+GRANT INSERT ON
+  public.telemetry_samples,
+  public.audit_events
+TO pulse_metrics_app;
+
+GRANT USAGE, SELECT ON SEQUENCE
+  public.telemetry_samples_id_seq
+TO pulse_metrics_app;
+
+REVOKE ALL ON
+  public.agent_credentials,
+  public.agent_enrollment_tokens
+FROM PUBLIC, pulse_metrics_app;
+
+REVOKE UPDATE, DELETE, TRUNCATE ON
+  public.audit_events,
+  public.telemetry_samples
+FROM PUBLIC, pulse_metrics_app;
+```
+
+These grants are deliberately incomplete for a functioning product: signup,
+organization provisioning, membership administration, agent creation,
+heartbeat updates, credential verification, and enrollment-token redemption
+need dedicated, reviewed service operations. Do not solve missing features by
+granting broad table access. A later agent-authentication role should be
+introduced only alongside its specific verification function/service and
+security tests; it is not created or granted access in this initial foundation.
+
+Before using these statements, verify the database name and schema. Do not run
+them against any existing production database or a database used by unrelated
+services. For hosted PostgreSQL, adapt database ownership and schema privileges
+to the provider's documented administrative model.
+
 ## Row-Level Security
 
 PostgreSQL combines permissive policies with OR and restrictive policies with
