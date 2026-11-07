@@ -42,6 +42,16 @@ function requiredDatabaseUrl(): string {
   return value;
 }
 
+function configuredPoolMax(): number {
+  const value = Number.parseInt(process.env.DATABASE_POOL_MAX ?? "10", 10);
+
+  if (!Number.isInteger(value) || value < 1 || value > 50) {
+    throw new Error("DATABASE_POOL_MAX must be an integer between 1 and 50.");
+  }
+
+  return value;
+}
+
 /**
  * Create the pool only when a database operation is first requested. This
  * lets frontend-only development and build commands run without PostgreSQL.
@@ -53,7 +63,7 @@ export function getDatabase(): PulseDatabase {
 
   pool = new Pool({
     connectionString,
-    max: Number.parseInt(process.env.DATABASE_POOL_MAX ?? "10", 10),
+    max: configuredPoolMax(),
     connectionTimeoutMillis: 5_000,
     idleTimeoutMillis: 30_000,
     statement_timeout: 15_000,
