@@ -50,7 +50,8 @@ Choose passwords interactively with psql's `\password` command; never put
 passwords in this document, shell history, source control, or connection URLs
 that may be logged.
 
-Create the two login roles:
+Create the two login roles as a PostgreSQL administrator. These roles are
+specific to this database; do not reuse them for other applications:
 
 ```sql
 CREATE ROLE pulse_metrics_migrator
@@ -62,27 +63,43 @@ CREATE ROLE pulse_metrics_app
 GRANT CONNECT ON DATABASE pulse_metrics
   TO pulse_metrics_migrator, pulse_metrics_app;
 
+-- Keep the public schema usable, but prevent arbitrary database users
+-- from creating objects there.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+
+-- Migrations create and own the tables, indexes, policies and migration ledger.
 GRANT USAGE, CREATE ON SCHEMA public TO pulse_metrics_migrator;
+
+-- The running API can resolve objects but cannot create or alter them.
 GRANT USAGE ON SCHEMA public TO pulse_metrics_app;
 
+-- Make future objects created by the migration role private unless explicitly
+-- granted after review. This also prevents accidental PUBLIC function execution.
 ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC;
+  REVOKE ALL ON TABLES FROM PUBLIC, pulse_metrics_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC;
+  REVOKE ALL ON SEQUENCES FROM PUBLIC, pulse_metrics_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+  REVOKE ALL ON FUNCTIONS FROM PUBLIC, pulse_metrics_app;
 ```
 
-Then, in the same psql session, set passwords interactively:
+Set each password interactively in the same psql session. Do not put passwords
+in SQL files, shell history, source control, or connection URLs that may be
+logged:
 
 ```text
-\password pulse_metrics_migrator
-\password pulse_metrics_app
+\\password pulse_metrics_migrator
+\\password pulse_metrics_app
 ```
 
-Use `pulse_metrics_migrator` only for reviewed Drizzle migrations. Objects
-created by this role are owned by it; the API must never use this connection.
+The migration URL must authenticate as `pulse_metrics_migrator`; the API URL
+must authenticate as `pulse_metrics_app`. URL-encode reserved characters in
+passwords when building PostgreSQL connection URLs. Do not grant either login
+membership in privileged roles. Do not make the API role a member of the
+migration role.
 
 After the reviewed migration has been applied, grant the ordinary API role
-only the initial read and append operations:
+only its initial read and append operations:
 
 ```sql
 GRANT SELECT ON
@@ -103,11 +120,13 @@ GRANT USAGE, SELECT ON SEQUENCE
   public.telemetry_samples_id_seq
 TO pulse_metrics_app;
 
+-- The secret tables remain inaccessible to the ordinary API role.
 REVOKE ALL ON
   public.agent_credentials,
   public.agent_enrollment_tokens
 FROM PUBLIC, pulse_metrics_app;
 
+-- Telemetry and audit rows are append-only for this role.
 REVOKE UPDATE, DELETE, TRUNCATE ON
   public.audit_events,
   public.telemetry_samples
@@ -118,14 +137,18 @@ These grants are deliberately incomplete for a functioning product: signup,
 organization provisioning, membership administration, agent creation,
 heartbeat updates, credential verification, and enrollment-token redemption
 need dedicated, reviewed service operations. Do not solve missing features by
-granting broad table access. A later agent-authentication role should be
-introduced only alongside its specific verification function/service and
-security tests; it is not created or granted access in this initial foundation.
+granting broad table access. A later agent-authentication component must be
+introduced alongside a narrowly scoped credential-verification operation and
+security tests; it is not granted direct secret-table access in this initial
+foundation.
 
-Before using these statements, verify the database name and schema. Do not run
-them against any existing production database or a database used by unrelated
-services. For hosted PostgreSQL, adapt database ownership and schema privileges
-to the provider's documented administrative model.
+Before using these statements, verify that the target is the dedicated
+`pulse_metrics` development database and that the schema is `public`. Do not
+run them against any existing production database or a database used by
+unrelated services. Hosted PostgreSQL providers may impose different database
+and schema ownership rules; adapt the administrator setup to the provider's
+documented model while preserving the separation of runtime and migration
+roles.
 
 ## Row-Level Security
 
