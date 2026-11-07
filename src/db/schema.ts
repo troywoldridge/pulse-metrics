@@ -397,9 +397,12 @@ export const telemetrySamples = pgTable(
       "telemetry_samples_metrics_object_and_size",
       sql`jsonb_typeof(${table.metrics}) = 'object' AND octet_length(${table.metrics}::text) <= 262144`,
     ),
-    pgPolicy("telemetry_samples_tenant_access", {
-      for: "all",
+    pgPolicy("telemetry_samples_tenant_read", {
+      for: "select",
       using: sql`${table.organizationId} = ${activeOrganizationId}`,
+    }),
+    pgPolicy("telemetry_samples_tenant_insert", {
+      for: "insert",
       withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
     }),
   ],
