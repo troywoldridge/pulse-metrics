@@ -1,10 +1,12 @@
 import "dotenv/config";
 import { defineConfig } from "drizzle-kit";
 
-if (!process.env.DATABASE_URL) {
+const migrationDatabaseUrl = process.env.MIGRATION_DATABASE_URL?.trim();
+
+if (!migrationDatabaseUrl) {
   throw new Error(
-    "DATABASE_URL is required for Drizzle commands. " +
-      "Copy .env.example to .env and configure your development database.",
+    "MIGRATION_DATABASE_URL is required for Drizzle commands. " +
+      "Use a dedicated migration role; do not point migrations at the API runtime role.",
   );
 }
 
@@ -13,7 +15,7 @@ export default defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
   dbCredentials: {
-    url: process.env.DATABASE_URL,
+    url: migrationDatabaseUrl,
   },
   strict: true,
   verbose: true,
