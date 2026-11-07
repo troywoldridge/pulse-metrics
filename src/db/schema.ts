@@ -24,7 +24,8 @@ import {
  * tenant data must run through withOrganizationContext().
  *
  * The runtime database role must not be a superuser, have BYPASSRLS, or own
- * these tables. Tables are FORCE ROW LEVEL SECURITY protected in migrations.
+ * these tables. Policies enable RLS; table owners otherwise bypass RLS unless
+ * FORCE ROW LEVEL SECURITY is explicitly applied by a reviewed migration.
  */
 const activeOrganizationId = sql`NULLIF(current_setting('app.current_organization_id', true), '')::uuid`;
 const activeUserId = sql`NULLIF(current_setting('app.current_user_id', true), '')::uuid`;
@@ -64,17 +65,9 @@ export const organizations = pgTable(
   },
   (table) => [
     uniqueIndex("organizations_slug_unique").on(table.slug),
-    pgPolicy("organizations_member_read", {
+    pgPolicy("organizations_active_tenant_read", {
       for: "select",
-      using: sql`
-        ${table.id} = ${activeOrganizationId}
-        OR EXISTS (
-          SELECT 1
-          FROM organization_memberships AS membership
-          WHERE membership.organization_id = ${table.id}
-            AND membership.user_id = ${activeUserId}
-        )
-      `,
+      using: sql`${table.id} = ${activeOrganizationId}`,
     }),
     pgPolicy("organizations_active_tenant_write", {
       for: "all",
@@ -112,11 +105,6 @@ export const users = pgTable(
     pgPolicy("users_self_read", {
       for: "select",
       using: sql`${table.id} = ${activeUserId}`,
-    }),
-    pgPolicy("users_self_write", {
-      for: "all",
-      using: sql`${table.id} = ${activeUserId}`,
-      withCheck: sql`${table.id} = ${activeUserId}`,
     }),
   ],
 );
