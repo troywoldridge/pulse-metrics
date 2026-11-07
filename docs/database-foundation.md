@@ -180,10 +180,22 @@ eight tables:
 - `telemetry_samples`
 - `audit_events`
 
-Add the corresponding `ALTER TABLE ... FORCE ROW LEVEL SECURITY;` statements
-to the reviewed migration before applying it. FORCE makes table owners subject
-to RLS too; PostgreSQL superusers and roles with `BYPASSRLS` still bypass it,
-so the application runtime must never have either attribute.
+Append these statements to the reviewed initial migration before applying it:
+
+```sql
+ALTER TABLE "organizations" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "users" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "organization_memberships" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "monitored_agents" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "agent_enrollment_tokens" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "agent_credentials" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "telemetry_samples" FORCE ROW LEVEL SECURITY;
+ALTER TABLE "audit_events" FORCE ROW LEVEL SECURITY;
+```
+
+FORCE makes table owners subject to RLS too; PostgreSQL superusers and roles
+with `BYPASSRLS` still bypass it, so the application runtime must never have
+either attribute.
 
 User-initiated tenant queries must use `withOrganizationContext()`. That helper:
 
