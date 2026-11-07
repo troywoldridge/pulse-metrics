@@ -17,6 +17,14 @@ export default defineConfig({
   dbCredentials: {
     url: migrationDatabaseUrl,
   },
+  // Keep Drizzle's migration ledger in the existing public schema. This avoids
+  // creating a separate default "drizzle" schema during migration bootstrap.
+  // The migration role owns this ledger; default privileges keep it private
+  // from PUBLIC and the ordinary application runtime role.
+  migrations: {
+    schema: "public",
+    table: "__drizzle_migrations",
+  },
   strict: true,
   verbose: true,
 });
