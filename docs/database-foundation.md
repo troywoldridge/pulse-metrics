@@ -210,13 +210,13 @@ Enrollment tokens and agent credentials store SHA-256 token hashes, never
 plaintext bearer tokens. Plaintext tokens must be displayed only once at
 creation and must not be logged.
 
-The secret tables are intentionally inaccessible to ordinary application
-queries. Do not weaken the restrictive policies to make an endpoint work.
-Credential verification will require a narrowly scoped isolated service or
-carefully reviewed database function with minimal privileges. If a dedicated
-verification role needs `BYPASSRLS`, it must be NOLOGIN, narrowly owned and
-not exposed as a general-purpose application connection. Credential
-verification must happen before setting agent tenant context.
+The secret tables have RLS enabled and no policies, so ordinary row access
+is default-denied. Do not grant the general API role direct access to these
+tables. Credential verification and enrollment redemption will require a
+narrowly scoped isolated service or carefully reviewed database function with
+minimal privileges. Prefer a function with a fixed, audited query surface over
+granting a login role `BYPASSRLS`. Credential verification must happen before
+setting agent tenant context.
 
 ## Telemetry and retention
 
