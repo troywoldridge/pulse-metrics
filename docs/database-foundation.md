@@ -199,6 +199,17 @@ it must come from a verified authentication session. Transaction-local
 settings prevent a pooled connection from retaining one request's tenant
 context for a later request.
 
+Important trust boundary: PostgreSQL custom settings such as
+`app.current_organization_id` are not secrets or unforgeable identity claims.
+The shared API database role can set them. These policies protect against
+missing tenant filters and ordinary application mistakes when all user
+queries go through the verified context helper; they do not contain arbitrary
+SQL execution or a full compromise of the API process. Prevent SQL injection,
+keep database access behind parameterized service operations, and test the
+authorization layer independently. Do not describe this GUC-based design as
+protection against an attacker who can execute arbitrary SQL as the runtime
+role.
+
 The application must also enforce role-based authorization. RLS establishes
 the organization boundary; it does not decide whether a member is an owner,
 administrator, member, or viewer. Membership writes, organization provisioning,
