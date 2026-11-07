@@ -75,12 +75,16 @@ GRANT USAGE ON SCHEMA public TO pulse_metrics_app;
 
 -- Make future objects created by the migration role private unless explicitly
 -- granted after review. This also prevents accidental PUBLIC function execution.
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator
   REVOKE ALL ON TABLES FROM PUBLIC, pulse_metrics_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator
   REVOKE ALL ON SEQUENCES FROM PUBLIC, pulse_metrics_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
-  REVOKE ALL ON FUNCTIONS FROM PUBLIC, pulse_metrics_app;
+
+-- Function EXECUTE is granted to PUBLIC by PostgreSQL by default.
+-- This must be revoked globally; a schema-scoped revoke cannot cancel
+-- the global default privilege.
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ```
 
 Set each password interactively in the same psql session. Do not put passwords
