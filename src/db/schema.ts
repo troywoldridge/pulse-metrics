@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
-  boolean,
   check,
   foreignKey,
   index,
@@ -13,7 +12,6 @@ import {
   pgTable,
   primaryKey,
   real,
-  text,
   timestamp,
   unique,
   uniqueIndex,
