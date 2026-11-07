@@ -46,7 +46,7 @@ A hostname mismatch or untrusted certificate must fail closed.
 
 The following is the initial local-development role model. Run role creation as
 a PostgreSQL administrator against the dedicated `pulse_metrics` database.
-Choose passwords interactively with psql's `\\password` command; never put
+Choose passwords interactively with psql's `\password` command; never put
 passwords in this document, shell history, source control, or connection URLs
 that may be logged.
 
@@ -74,8 +74,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
 Then, in the same psql session, set passwords interactively:
 
 ```text
-\\password pulse_metrics_migrator
-\\password pulse_metrics_app
+\password pulse_metrics_migrator
+\password pulse_metrics_app
 ```
 
 Use `pulse_metrics_migrator` only for reviewed Drizzle migrations. Objects
