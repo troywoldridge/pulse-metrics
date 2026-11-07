@@ -20,11 +20,16 @@ import {
 } from "drizzle-orm/pg-core";
 
 /**
- * Tenant policies use transaction-local settings installed by
- * withOrganizationContext(). The application runtime role must be a
+ * RLS predicates consume transaction-local settings installed by
+ * withOrganizationContext(). The runtime database role must be a
  * non-superuser, must not have BYPASSRLS, and must not own tenant tables.
- * Table owners otherwise bypass RLS unless FORCE ROW LEVEL SECURITY is
- * explicitly applied by a reviewed migration.
+ *
+ * Tenant boundaries are RESTRICTIVE policies. This matters because
+ * PostgreSQL combines permissive policies with OR: a future permissive
+ * policy must never be able to widen access beyond these tenant predicates.
+ * Secret tables use restrictive false policies and intentionally have no
+ * permissive policies, so access remains denied even if a permissive policy
+ * is accidentally added later.
  */
 const activeOrganizationId = sql`NULLIF(current_setting('app.current_organization_id', true), '')::uuid`;
 const activeUserId = sql`NULLIF(current_setting('app.current_user_id', true), '')::uuid`;
@@ -72,14 +77,14 @@ export const organizations = pgTable(
       "organizations_slug_format",
       sql`${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`,
     ),
-    pgPolicy("organizations_active_tenant_read", {
+    pgPolicy("organizations_tenant_boundary", {
+      as: "restrictive",
       for: "select",
       using: sql`${table.id} = ${activeOrganizationId}`,
     }),
-    pgPolicy("organizations_active_tenant_write", {
-      for: "all",
+    pgPolicy("organizations_active_tenant_read", {
+      for: "select",
       using: sql`${table.id} = ${activeOrganizationId}`,
-      withCheck: sql`${table.id} = ${activeOrganizationId}`,
     }),
   ],
 );
@@ -117,7 +122,12 @@ export const users = pgTable(
       "users_auth_subject_nonempty",
       sql`length(btrim(${table.authSubject})) > 0`,
     ),
-    // Identity fields are synchronized only by a trusted auth adapter.
+    pgPolicy("users_self_boundary", {
+      as: "restrictive",
+      for: "select",
+      using: sql`${table.id} = ${activeUserId}`,
+    }),
+    // Identity rows are synchronized only by a trusted authentication adapter.
     pgPolicy("users_self_read", {
       for: "select",
       using: sql`${table.id} = ${activeUserId}`,
@@ -150,6 +160,14 @@ export const organizationMemberships = pgTable(
       columns: [table.organizationId, table.userId],
     }),
     index("organization_memberships_user_index").on(table.userId),
+    pgPolicy("organization_memberships_read_boundary", {
+      as: "restrictive",
+      for: "select",
+      using: sql`
+        ${table.organizationId} = ${activeOrganizationId}
+        OR ${table.userId} = ${activeUserId}
+      `,
+    }),
     pgPolicy("organization_memberships_member_read", {
       for: "select",
       using: sql`
@@ -157,11 +175,7 @@ export const organizationMemberships = pgTable(
         OR ${table.userId} = ${activeUserId}
       `,
     }),
-    pgPolicy("organization_memberships_active_tenant_write", {
-      for: "all",
-      using: sql`${table.organizationId} = ${activeOrganizationId}`,
-      withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
-    }),
+    // Membership writes are withheld until role-aware service operations exist.
   ],
 );
 
@@ -222,11 +236,18 @@ export const monitoredAgents = pgTable(
       "monitored_agents_architecture_nonempty",
       sql`length(btrim(${table.architecture})) > 0`,
     ),
-    pgPolicy("monitored_agents_tenant_access", {
+    pgPolicy("monitored_agents_tenant_boundary", {
+      as: "restrictive",
       for: "all",
       using: sql`${table.organizationId} = ${activeOrganizationId}`,
       withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
     }),
+    pgPolicy("monitored_agents_tenant_read", {
+      for: "select",
+      using: sql`${table.organizationId} = ${activeOrganizationId}`,
+    }),
+    // Agent creation and state changes require dedicated enrollment/heartbeat
+    // operations; broad table writes are intentionally not granted yet.
   ],
 );
 
@@ -272,9 +293,10 @@ export const agentEnrollmentTokens = pgTable(
       "agent_enrollment_tokens_usage_valid",
       sql`${table.maxUses} > 0 AND ${table.uses} >= 0 AND ${table.uses} <= ${table.maxUses}`,
     ),
-    // Deny direct application reads/writes until the controlled enrollment
-    // verifier is implemented.
+    // No permissive policy: this table is default-deny. The restrictive
+    // policy also prevents a later permissive policy from opening access.
     pgPolicy("agent_enrollment_tokens_deny_direct_access", {
+      as: "restrictive",
       for: "all",
       using: sql`false`,
       withCheck: sql`false`,
@@ -326,6 +348,7 @@ export const agentCredentials = pgTable(
       sql`${table.tokenHash} ~ '^[a-f0-9]{64}$'`,
     ),
     pgPolicy("agent_credentials_deny_direct_access", {
+      as: "restrictive",
       for: "all",
       using: sql`false`,
       withCheck: sql`false`,
@@ -401,6 +424,12 @@ export const telemetrySamples = pgTable(
       "telemetry_samples_metrics_object_and_size",
       sql`jsonb_typeof(${table.metrics}) = 'object' AND octet_length(${table.metrics}::text) <= 262144`,
     ),
+    pgPolicy("telemetry_samples_tenant_boundary", {
+      as: "restrictive",
+      for: "all",
+      using: sql`${table.organizationId} = ${activeOrganizationId}`,
+      withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
+    }),
     pgPolicy("telemetry_samples_tenant_read", {
       for: "select",
       using: sql`${table.organizationId} = ${activeOrganizationId}`,
@@ -409,6 +438,7 @@ export const telemetrySamples = pgTable(
       for: "insert",
       withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
     }),
+    // No update/delete permissive policies: samples are append-only.
   ],
 );
 
@@ -450,6 +480,12 @@ export const auditEvents = pgTable(
       "audit_events_metadata_object",
       sql`jsonb_typeof(${table.metadata}) = 'object'`,
     ),
+    pgPolicy("audit_events_tenant_boundary", {
+      as: "restrictive",
+      for: "all",
+      using: sql`${table.organizationId} = ${activeOrganizationId}`,
+      withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
+    }),
     pgPolicy("audit_events_tenant_read", {
       for: "select",
       using: sql`${table.organizationId} = ${activeOrganizationId}`,
@@ -458,7 +494,7 @@ export const auditEvents = pgTable(
       for: "insert",
       withCheck: sql`${table.organizationId} = ${activeOrganizationId}`,
     }),
-    // No UPDATE or DELETE policy: application audit records are append-only.
+    // No update/delete permissive policies: audit records are append-only.
   ],
 );
 
