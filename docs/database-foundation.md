@@ -30,6 +30,13 @@ Use separate PostgreSQL roles for migrations and application runtime:
 - The runtime role must not receive direct privileges on enrollment-token or
   agent-credential tables.
 - Keep deployment/migration credentials out of API process environments.
+- The migration role is a dedicated non-superuser login that owns the schema
+  objects it creates. It must not be used by the API.
+- The runtime role is a separate non-owner login with `NOSUPERUSER`,
+  `NOBYPASSRLS`, and no membership in privileged roles.
+- A future agent-authentication component will use a separately reviewed,
+  narrowly scoped database function or isolated service. Do not grant the
+  general API role direct access to token hashes or credential rows.
 
 Production runtime and migration URLs must use TLS with certificate and
 hostname verification (for example, `sslmode=verify-full` with a trusted CA).
@@ -42,8 +49,11 @@ AND. A future permissive policy can therefore accidentally widen access unless
 a tenant boundary is also enforced restrictively.
 
 The schema defines restrictive tenant-boundary policies for customer data.
-Agent enrollment and credential tables have restrictive false policies and no
-permissive policies; direct application access remains denied.
+Agent enrollment and credential tables have RLS enabled but intentionally have
+no policies. PostgreSQL therefore applies default-deny row access until a
+specific, reviewed policy is introduced. This is preferable to a permanent
+restrictive false policy, which would continue denying access even after a
+future permissive policy was added.
 
 Drizzle generates `ENABLE ROW LEVEL SECURITY` for tables with policies, but
 the generated migration must also contain `FORCE ROW LEVEL SECURITY` for all
@@ -83,8 +93,10 @@ administrator, member, or viewer. Membership writes, organization provisioning,
 agent creation, and agent-state changes deliberately have no ordinary runtime
 RLS write policy yet.
 
-The user runtime must not have `BYPASSRLS`. Tenant isolation must be tested
-using the same restricted role and connection path used by the application.
+The user runtime must not have `BYPASSRLS` and must not own tenant
+tables. PostgreSQL superusers and `BYPASSRLS` roles bypass RLS even when
+`FORCE ROW LEVEL SECURITY` is enabled. Tenant isolation must be tested using
+the same restricted role and connection path used by the application.
 Tests using a superuser or table owner do not prove tenant isolation.
 
 Initial organization provisioning is not implemented. It will need a separate,
@@ -135,9 +147,12 @@ collecting customer telemetry in production.
 
 ## Audit events
 
-Audit events are append-only for the ordinary application role. Store only
-allowlisted metadata; never include bearer tokens, passwords, database URLs,
-private keys, or raw command output.
+Audit events are append-only for the ordinary application role. The
+schema enforces an actor-type/actor-ID consistency check and limits serialized
+metadata to 256 KiB. Database grants must withhold `UPDATE`, `DELETE`,
+and `TRUNCATE` from the runtime role. Store only allowlisted metadata;
+never include bearer tokens, passwords, database URLs, private keys, or raw
+command output.
 
 ## Current scope
 
