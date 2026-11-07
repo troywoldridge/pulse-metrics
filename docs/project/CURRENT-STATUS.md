@@ -3,36 +3,34 @@
 **Last updated:** 2026-11-07
 **Active branch:** feat/commercial-database-foundation
 
-This document is the project handover record. Update it whenever a meaningful
-milestone is completed or the next development task changes. A checked item
-must be supported by implementation or verification evidence described here.
+This document is the project handover record. Update it whenever a meaningful milestone is completed or the next development task changes.
 
 ## 1. Overall position
 
-Pulse Metrics is transitioning from a monitoring prototype toward a
-commercial, multi-tenant infrastructure monitoring and IT intelligence
-service.
+Pulse Metrics is transitioning from a monitoring prototype toward a commercial,
+multi-tenant infrastructure monitoring service.
 
-The PostgreSQL database foundation and repeatable tenant-isolation integration
-tests have been implemented. Initial genuine Linux telemetry collection,
-a versioned telemetry contract, a sampling engine and a standalone local
-runner have also been implemented.
+The commercial database foundation has been implemented, and the repeatable
+PostgreSQL tenant-isolation integration test passes.
 
-The local runner has been started successfully and observed emitting two
-successive telemetry envelopes at the configured five-second interval.
-The first CPU usage sample was correctly marked unavailable because a second
-counter reading was required; the next sample contained a measured CPU usage
-value. Other observed readings included CPU core count and load averages,
-memory, swap, root filesystem capacity, cumulative network byte counters and
-system uptime.
+The architecture for human authentication, application authorization,
+real-time WebSocket delivery and machine-agent authentication has now been
+documented in ARCHITECTURE-DECISIONS.md.
 
-The local agent is a development-only collector. It currently writes
-structured telemetry to the local terminal. It does not authenticate,
-enroll with an organization, connect to the SaaS service, submit telemetry
-over a network, or persist samples.
+WorkOS AuthKit is the selected provider for human authentication. This is an
+architectural selection only: WorkOS has not yet been integrated, configured
+or tested in the application.
 
-**Production readiness has not been achieved. Public customer onboarding is
-not permitted.**
+WebSockets will be retained for real-time monitoring and event delivery.
+Authenticated WebSocket connections, organization subscriptions and
+tenant-isolated event delivery have not yet been implemented.
+
+Monitoring-agent authentication will remain separate from human
+authentication. Secure agent enrollment, credential issuance and authenticated
+telemetry ingestion have not yet been implemented.
+
+The project is not production-ready and must not be exposed as a public
+customer service in its current state.
 
 ## 2. Verified progress
 
@@ -41,12 +39,12 @@ not permitted.**
 - [x] Canonical repository established:
   https://github.com/troywoldridge/pulse-metrics.git
 - [x] Commercial database foundation feature branch created.
-- [x] Project architecture and roadmap documentation exists.
+- [x] Database architecture documentation exists.
 - [x] Runtime and migration database connection settings are separated.
 - [x] `.env` is ignored by Git.
 - [x] Gemini integration is not required for the core monitoring product.
-- [x] Existing work is being preserved on the feature branch; current Git
-  state must be rechecked before staging or committing.
+- [x] Project roadmap, current status, security checklist and architecture
+      decision documents are maintained.
 
 ### Database infrastructure
 
@@ -92,98 +90,123 @@ not permitted.**
 - [x] Separate cleanup query confirmed zero remaining test fixtures.
 
 The repeatable integration test covers the specific tenant-context and
-database-security scenarios listed above. It is not proof that every possible
-tenant-isolation attack path has been covered, and it does not test
-customer-facing API authorization because that layer is not complete.
-
-### Local Linux telemetry foundation
-
-- [x] Versioned telemetry contract implemented (`schemaVersion: 1`).
-- [x] Metric names, units, timestamps and availability states are defined.
-- [x] Telemetry sample and envelope validation implemented.
-- [x] Linux collector reads CPU counters from `/proc/stat`.
-- [x] CPU usage is calculated from successive counter readings; the initial
-  sample is reported as unavailable rather than fabricated.
-- [x] CPU core count and load averages are collected through Node's OS APIs.
-- [x] Memory and swap values are read from `/proc/meminfo`.
-- [x] Root filesystem capacity and available space are read using `statfs`.
-- [x] Cumulative network byte counters are read from `/proc/net/dev`.
-- [x] System uptime is collected through Node's OS APIs.
-- [x] Unsupported or unavailable measurements use explicit availability
-  states rather than invented numeric values.
-- [x] Collector and sampler are separated from the Express dashboard server.
-- [x] Sampling engine prevents overlapping collections and shares an active
-  collection between concurrent callers.
-- [x] Standalone `npm run agent:linux` command implemented.
-- [x] Runner validates telemetry envelopes before reporting samples.
-- [x] Runner emits structured local terminal output and error records.
-- [x] Runner code contains no telemetry HTTP submission or database write.
-- [x] Manual runner execution observed two successive valid envelopes at a
-  five-second interval on 2026-11-07.
-
-Important measurement limitations:
-
-- Network values currently represent cumulative byte counters, not bytes per
-  second or network speed.
-- The current collector aggregates non-loopback interfaces. Virtual,
-  bridge and physical interface relationships can cause double counting.
-  These aggregate values must not yet be treated as commercially accurate
-  per-device network traffic or rates.
-- CPU load averages are load averages, not CPU utilization percentages.
-- Process-level telemetry, CPU temperature, disk I/O and per-interface
-  network identity are not currently part of this initial collector.
-- The runner is Linux-only and local-only.
+database security scenarios listed above. It is not proof that every possible
+tenant-isolation attack path has been covered.
 
 ### Automated verification
 
-Verified on 2026-11-07 after the standalone Linux runner additions:
+Verified on 2026-11-07:
 
 | Check | Result |
 |---|---|
 | `npm run lint` | Passed |
-| `npm test` | 57 passed, 0 failed |
-| `npm run test:integration` | Both initial-membership and revoked-membership phases passed |
-| Integration fixture cleanup | Temporary organizations, users, memberships, agents and telemetry removed |
+| `npm test` | 13 passed, 0 failed |
 | `npm run db:check` | Passed |
-| `npm run build` | Passed |
+| `npm run test:integration` — first run | 2 phases passed |
+| `npm run test:integration` — second run | 2 phases passed |
+| Test fixture cleanup | All four fixture counts zero |
 
-The production build completed successfully. Vite reported non-blocking warnings
-about `__dirname` in the native config loader and a JavaScript chunk exceeding
-500 kB after minification. These are follow-up improvements, not build failures.
+The production build was not part of this verification run and is not recorded
+as passed here.
 
-The standalone runner was manually started with `npm run agent:linux`.
-Two successive telemetry envelopes were observed at the configured
-five-second interval. The first CPU usage sample was correctly unavailable
-until a second counter reading was available. Pressing Ctrl+C successfully
-stopped the runner, verifying manual SIGINT shutdown. Manual SIGTERM shutdown
-has not yet been independently verified.
+## 3. Architecture decisions recorded
 
-These checks verify the current local development foundation. They do not
-establish production readiness or complete customer-facing application
-security.
+The following decisions have been added to
+`docs/project/ARCHITECTURE-DECISIONS.md`.
 
-## 3. Current worktree and Git state
+### ADR-011 — WorkOS AuthKit for human authentication
 
-The worktree contains uncommitted database, documentation, script, test,
-package and agent work. The exact current state must be checked before
-staging or committing:
+**Status: Accepted as the selected provider; integration pending.**
+
+WorkOS AuthKit is the selected human authentication provider.
+
+Before implementation, its current integration requirements must be reviewed
+against the existing Express server, React/Vite frontend, session model and
+database identity structure.
+
+No WorkOS authentication package or integration has been installed or
+implemented as part of this decision.
+
+### ADR-012 — Pulse Metrics owns application authorization
+
+**Status: Accepted.**
+
+WorkOS will authenticate human users. Pulse Metrics will retain responsibility
+for internal user mapping, organization membership, roles, permissions and
+authorization to customer resources.
+
+Provider identity claims or browser-supplied organization IDs must not replace
+server-side authorization checks.
+
+The existing PostgreSQL tenant context and RLS protections remain part of the
+data-access security boundary.
+
+### ADR-013 — Authenticated organization-scoped WebSockets
+
+**Status: Accepted as the intended architecture; implementation pending.**
+
+WebSockets will be retained for real-time monitoring and event delivery,
+including live metric updates, agent status changes, alerts and authorized
+diagnostic progress.
+
+Browser WebSocket connections must be authenticated. Organization
+subscriptions and protected actions must be authorized by the server.
+Events must never be broadcast across customer organization boundaries.
+
+WebSockets are for real-time delivery and notification. PostgreSQL remains
+the persistent source for stored application and telemetry data.
+
+The existing prototype WebSocket implementation is not considered secure
+or production-ready.
+
+### ADR-014 — Separate human identity from machine/agent authentication
+
+**Status: Accepted as the intended architecture; implementation pending.**
+
+Human users and monitoring agents will use separate authentication systems.
+
+WorkOS AuthKit is intended for human identity. Monitoring agents will use
+separate machine credentials issued through a secure enrollment process.
+
+Browser sessions must never be reused as agent credentials.
+
+### Important implementation distinction
+
+Recording an architecture decision does not mean the feature is implemented.
+
+At this point:
+
+- WorkOS AuthKit has been selected but is not integrated.
+- Trusted server-side human identity verification is not implemented.
+- Application-level organization role enforcement is not complete.
+- Browser WebSocket authentication is not implemented.
+- Organization-scoped WebSocket subscriptions and event authorization are
+  not implemented.
+- Separate agent credential issuance and verification are not implemented.
+- Authenticated telemetry ingestion is not implemented.
+
+## 4. Current worktree and Git state
+
+The architecture decision document has been updated with ADR-011 through
+ADR-014. The roadmap and current-status documents are being aligned with
+those decisions.
+
+Check the exact worktree state before staging or committing:
 
 ```bash
 git status --short
 git diff --check
 ```
 
-Previously observed uncommitted paths included `.env.example`,
-`package.json`, `package-lock.json`, `docs/project/`, `drizzle/`,
-`scripts/`, `src/agent/` and `tests/`. This list may be stale and must not
-be used as a substitute for a fresh `git status`.
-
 Preserve all existing work. Do not discard, reset or overwrite unrelated
-changes. No commit or push for this checkpoint is recorded yet.
+changes.
 
-## 4. Completed milestones
+Do not assume that documentation changes have been committed. Verify the
+Git status and review the diff before creating a commit.
 
-### Milestone A — Repeatable PostgreSQL tenant-isolation integration tests
+## 5. Completed milestone
+
+**Milestone:** Repeatable PostgreSQL tenant-isolation integration tests.
 
 The milestone's defined requirements have been met:
 
@@ -198,103 +221,113 @@ The milestone's defined requirements have been met:
 - [x] The documented command runs successfully.
 - [x] The integration command has passed twice.
 - [x] Cleanup verification reports zero remaining fixtures.
+- [x] Unit tests, TypeScript checks and Drizzle schema checks pass.
 
-This completes the current database tenant-isolation test objective. It does
-not complete the application's overall security or production readiness
-requirements.
+This milestone completes the current database tenant-isolation test objective.
+It does not complete the application's overall security or production
+readiness requirements.
 
-### Milestone B — Initial local Linux telemetry runner
+## 6. Known limitations and future work
 
-**Status: Implemented; automated verification and manual SIGINT shutdown passed.**
-
-- [x] Initial Linux telemetry collector implemented.
-- [x] Versioned telemetry contract and validation implemented.
-- [x] Sampling engine implemented with overlap prevention.
-- [x] Standalone local runner implemented.
-- [x] Manual execution produced successive real telemetry envelopes.
-- [x] Latest `npm run lint` and `npm test` pass after runner additions.
-- [x] Manual SIGINT shutdown verified by pressing Ctrl+C.
-- [ ] Manual SIGTERM shutdown independently verified.
-- [x] Production build passes with the latest changes.
-
-This milestone is intentionally local-only. It does not complete secure
-customer agent enrollment, authenticated ingestion or telemetry persistence.
-
-## 5. Known limitations and future work
+The database foundation and accepted architecture decisions are not the
+complete application security model.
 
 Still required:
 
-- User authentication and secure sessions.
+- WorkOS AuthKit integration and configuration.
+- Secure authentication verification and session handling.
 - Trusted server-side user identity.
+- Internal user mapping to verified provider identities.
 - Organization provisioning and membership administration.
 - Organization role and permission enforcement.
+- Authenticated and authorized browser WebSocket connections.
+- Organization-scoped WebSocket subscriptions and event delivery.
+- Tests preventing cross-tenant real-time event delivery.
 - Agent enrollment and credential verification.
 - Agent credential rotation and revocation.
-- Authenticated telemetry ingestion and persistence.
+- Authenticated telemetry ingestion.
 - API authorization and rate limiting.
 - Audit-event generation and review.
-- Customer dashboard authorization and replacement of prototype data paths.
-- Removal or safe replacement of prototype SSH and arbitrary remote command
-  execution.
-- Network interface identity and accurate network-rate calculation.
-- Additional safe metrics and operating-system support.
+- Customer dashboard authorization.
+- Removal of prototype arbitrary SSH/WebSocket command execution.
+- Removal of fabricated telemetry and hardcoded prototype host assumptions.
 - Subscription and billing enforcement.
 - Operational monitoring, backup and recovery.
 - Data retention and deletion policies.
 - Security, performance and production acceptance testing.
 
-Do not expose the existing prototype's arbitrary SSH/WebSocket command
-execution as an unauthenticated customer capability. Any future remote
-administration functionality requires a separately reviewed security design.
+The existing prototype's arbitrary SSH/WebSocket command execution must not
+be exposed as an unauthenticated customer capability. WebSockets are being
+retained for authorized real-time delivery, not arbitrary remote command
+execution.
 
-## 6. Next development milestone
+## 7. Next development milestone
 
-**Immediate task: complete the reviewed Git checkpoint.**
-
-The latest lint, unit tests, PostgreSQL integration tests, Drizzle check,
-production build and manual SIGINT shutdown verification passed on
-2026-11-07. Review the staged changes, preserve all existing work, then
-commit and push the feature branch.
-
-Manual SIGTERM shutdown verification remains outstanding and should be
-completed as a follow-up validation item.
-
-**Next architectural milestone: authentication, trusted identity and
-organization access.**
+**Next milestone: WorkOS integration review, authentication, trusted identity
+and organization access.**
 
 Recommended sequence:
 
-1. Define the authentication provider and secure session model.
-2. Implement server-side authentication verification.
-3. Establish trusted user identity from verified authentication claims.
-4. Implement organization provisioning.
-5. Implement organization membership administration.
-6. Enforce organization roles and permissions in server-side operations.
-7. Add automated tests for authenticated and unauthorized API access.
-8. Review session security, account lifecycle and recovery behavior.
+1. Review WorkOS AuthKit's current Node.js integration and configuration
+   requirements.
+2. Confirm how WorkOS authentication will fit the existing Express server
+   and React/Vite frontend.
+3. Define secure server-side session or token verification.
+4. Define the mapping from verified WorkOS provider/subject identity to
+   internal Pulse Metrics users.
+5. Preserve provider-independent internal user records.
+6. Implement authentication and trusted server-side user identity.
+7. Implement organization provisioning and membership administration.
+8. Enforce organization roles and permissions in server-side operations.
+9. Authenticate browser-facing WebSocket connections.
+10. Authorize organization subscriptions and prevent cross-tenant event
+    delivery.
+11. Add automated tests for authenticated and unauthorized API and
+    WebSocket access.
+12. Review session security, account lifecycle and recovery behavior.
 
-After the identity foundation is verified, proceed to secure agent enrollment:
+Do not treat WorkOS authentication as a replacement for Pulse Metrics
+authorization. The application must continue to verify internal organization
+membership and permissions before granting access to customer resources.
+
+After the human identity and organization authorization foundation is
+verified, proceed to secure agent enrollment:
 
 - One-time enrollment tokens.
 - Hashed token storage.
 - Token expiry and single-use enforcement.
 - Authenticated agent credential issuance.
 - Credential rotation and revocation.
+- A separate authenticated machine communication channel.
 - Authenticated telemetry ingestion.
+- Per-organization agent authorization.
 
-Do not move customer onboarding into production until authentication,
-authorization, enrollment, telemetry ingestion and operational security
-requirements have been implemented and reviewed.
+Do not move customer onboarding into production until the complete
+authentication, authorization, WebSocket security, enrollment, telemetry and
+operational security requirements have been implemented and reviewed.
 
-## 7. Project health statement
+## 8. Project health statement
 
-**Current stage:** PostgreSQL tenant-isolation foundation completed; initial
-local Linux telemetry collector and runner implemented and verified locally.
+**Current stage:** Commercial database foundation implemented; repeatable
+tenant-isolation integration testing completed; authentication and real-time
+security architecture documented.
+
+**Human authentication provider:** WorkOS AuthKit selected; integration
+pending.
+
+**Application authorization:** Owned by Pulse Metrics; implementation
+incomplete.
+
+**WebSockets:** Retained for real-time monitoring; authentication and
+organization authorization not implemented.
+
+**Agent authentication:** Separate machine identity architecture accepted;
+implementation pending.
 
 **Production readiness:** Not achieved.
 
 **Public customer onboarding:** Not permitted yet.
 
-**Next priority:** Finish local runner verification and establish a clean Git
-checkpoint, then implement authentication, trusted server-side identity and
-organization access controls before secure agent enrollment.
+**Next priority:** Review and implement WorkOS authentication, trusted
+server-side identity, organization access controls and authenticated,
+organization-scoped WebSockets before proceeding to secure agent enrollment.

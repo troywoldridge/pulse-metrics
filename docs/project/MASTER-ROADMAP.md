@@ -37,13 +37,13 @@ Every phase must follow these principles:
 
 1. **Multi-tenant security:** Customer organizations must be isolated at
    every application, API and database boundary.
-2. **Authenticated identity:** Users, organizations and agents must have
-   independently verified identities.
+2. **Authenticated identity:** Human users and monitoring agents must have
+   independently verified identities and separate authentication flows.
 3. **Least privilege:** Application users, agents and services receive only
    the permissions they require.
 4. **Real measurements:** Fabricated, random or estimated values must never
    be presented as genuine system measurements.
-5. **Secure agent communication:** Agents initiate outbound authenticated
+5. **Secure agent communication:** Agents initiate authenticated outbound
    connections. Customers should not need to expose inbound management ports.
 6. **No unrestricted remote shell:** The customer dashboard must not execute
    arbitrary commands on monitored devices.
@@ -55,6 +55,13 @@ Every phase must follow these principles:
    represented honestly.
 10. **Test before release:** Security, tenant isolation and failure behavior
     must be verified, not merely assumed.
+11. **Application-owned authorization:** WorkOS authenticates human users;
+    Pulse Metrics remains responsible for application permissions,
+    organization membership and access to customer resources.
+12. **Secure real-time delivery:** WebSocket connections and organization
+    subscriptions must be authenticated, authorized and tenant-isolated.
+13. **Separate human and machine identity:** Browser sessions must never be
+    reused as monitoring-agent credentials.
 
 ## Phase 1 — Commercial foundation and database security
 
@@ -88,34 +95,79 @@ Completion criteria:
 
 ## Phase 2 — Authentication, identity and authorization
 
-**Status: Planned**
+**Status: Architecture selected; implementation not started.**
+
+**Selected human authentication provider: WorkOS AuthKit.**
+
+WorkOS AuthKit is the selected direction for human authentication, subject to
+the integration review and implementation work in this phase.
+
+WorkOS is intended to provide the human identity and authentication layer.
+Pulse Metrics will retain ownership of application authorization, internal
+organization membership, roles, permissions and access to tenant resources.
+
+The WorkOS integration must be reviewed against the existing Express server,
+React/Vite frontend, session requirements and database identity model before
+packages are installed or authentication code is introduced.
 
 Objectives:
 
-- Select and document the authentication architecture.
-- Implement secure registration and login.
+- Review WorkOS AuthKit's current Node.js and application integration
+  requirements.
+- Define secure authentication and session handling for the existing
+  application architecture.
+- Verify authentication tokens or sessions on the server.
+- Validate token signature, issuer, audience and expiration where applicable.
+- Resolve authenticated WorkOS identities to internal Pulse Metrics user
+  records using the provider and subject identity.
+- Preserve provider-independent internal user identity mapping.
+- Implement secure registration and login through the selected provider.
 - Implement session creation, validation, expiration and revocation.
-- Connect authenticated identities to internal user records.
+- Implement account lifecycle and appropriate recovery behavior.
 - Implement organization creation and membership management.
-- Implement organization roles and permission checks.
+- Implement organization roles and permission checks in Pulse Metrics.
 - Ensure organization identity is derived from trusted server-side context.
+- Never treat browser-supplied organization IDs or unverified identity claims
+  as sufficient authorization.
 - Add safe organization provisioning and membership administration.
 - Record security-sensitive account and membership events.
 - Protect API routes and dashboard data from unauthorized access.
+- Retain WebSockets for real-time monitoring and event delivery.
+- Authenticate browser WebSocket connections using the established human
+  authentication model.
+- Authorize every organization subscription and protected WebSocket action
+  server-side.
+- Prevent cross-organization WebSocket events and data delivery.
+- Keep ordinary REST APIs for appropriate request/response operations such
+  as resource management and configuration.
+- Keep machine-agent authentication separate from human authentication.
+
+WorkOS integration and enterprise identity capabilities must be evaluated
+without making the application dependent on provider-specific organization
+authorization. Future SSO, SCIM and enterprise identity features must fit the
+same internal authorization model.
 
 Completion criteria:
 
 - Unauthenticated requests cannot access protected resources.
+- Authentication is verified by the server, not trusted from browser input.
+- Authenticated identities map reliably to internal Pulse Metrics users.
 - Users cannot impersonate another user or organization by changing request
   parameters.
 - Organization membership and role permissions are enforced server-side.
 - Session lifecycle and revocation behavior are tested.
 - Security-sensitive operations are auditable.
-- WebSocket connections, if used, have authenticated and authorized access.
+- WebSocket connections require authentication.
+- Organization subscriptions and protected WebSocket actions require
+  server-side authorization.
+- Cross-tenant real-time event delivery is prevented and tested.
+- Human authentication cannot be used as a substitute for agent credentials.
+- Authentication and authorization failure behavior is tested.
 
 ## Phase 3 — Agent enrollment and credential infrastructure
 
-**Status: Planned**
+**Status: Planned — depends on the trusted identity and authorization
+foundation.**
 
 Objectives:
 
@@ -130,6 +182,10 @@ Objectives:
 - Establish secure outbound agent communication.
 - Define agent version and supported capability reporting.
 - Establish resource limits and safe collection permissions.
+- Keep agent credentials and machine identity independent from WorkOS human
+  user sessions.
+- Define a separate authenticated machine communication channel for telemetry
+  ingestion and agent status reporting.
 
 Completion criteria:
 
@@ -140,22 +196,12 @@ Completion criteria:
 - Agents cannot submit data for another organization's devices.
 - Agent communication is encrypted and authenticated.
 - Agent installation and removal procedures are documented.
+- Human user sessions cannot authenticate as monitoring agents.
 
 ## Phase 4 — Real telemetry collection and ingestion
 
-**Status: In progress — initial local Linux collection, telemetry contract,
-sampler and standalone local runner implemented; authenticated enrollment,
-ingestion and persistence remain outstanding.**
-
-The initial collector and runner are development components only. They read
-local Linux operating-system counters and emit validated telemetry to the
-local terminal. They do not enroll with a customer organization, authenticate
-to the SaaS service, transmit telemetry, or persist samples.
-
-Phase 4 depends on the identity and credential foundations in Phases 2 and 3
-before customer telemetry can be accepted by the SaaS platform. Local
-collector development may proceed in parallel, but it does not bypass those
-dependencies.
+**Status: Planned — follows the identity, authorization and agent credential
+foundations.**
 
 Objectives:
 
@@ -204,6 +250,15 @@ Objectives:
 - Retain and improve reusable dashboard widgets and visualizations.
 - Provide device search, filtering and sorting as appropriate.
 - Make the dashboard useful on desktop and mobile displays.
+- Use authenticated, organization-scoped WebSockets for live metric updates,
+  agent status changes, alerts and authorized diagnostic progress.
+- Use REST APIs for appropriate resource management and configuration
+  operations.
+- Ensure real-time events are delivered only to authorized organization
+  members.
+- Ensure persisted telemetry remains the authoritative historical record;
+  WebSockets provide real-time delivery and notification rather than
+  replacing persistent storage.
 
 Completion criteria:
 
@@ -214,6 +269,10 @@ Completion criteria:
 - No simulated values are presented as live measurements.
 - Dashboard failures and stale data are clearly communicated.
 - Customer-facing device actions are authorized and auditable.
+- WebSocket authentication and organization authorization are verified.
+- Cross-tenant event delivery tests pass.
+- Dashboard reconnect behavior handles disconnections without exposing
+  unauthorized data.
 
 ## Phase 6 — Alerts, notifications and reporting
 
@@ -230,6 +289,8 @@ Objectives:
 - Add useful historical reports and summaries.
 - Record relevant alert events for audit and troubleshooting.
 - Support configurable alert severity and notification channels.
+- Deliver authorized real-time alert notifications through the
+  organization-scoped event system where appropriate.
 
 Completion criteria:
 
@@ -239,6 +300,7 @@ Completion criteria:
 - Notifications are delivered safely.
 - Alert history is accurate and traceable.
 - Customers can configure and manage their alert preferences.
+- Real-time notifications cannot cross organization boundaries.
 
 ## Phase 7 — IT diagnostics and troubleshooting
 
@@ -262,6 +324,8 @@ Objectives:
 - Present diagnostic results with timestamps, severity and supporting evidence.
 - Provide clear explanations and recommended next steps.
 - Allow customers to control which diagnostic capabilities are enabled.
+- Deliver authorized diagnostic job progress and results through the
+  organization-scoped real-time event system where appropriate.
 
 Completion criteria:
 
@@ -274,6 +338,7 @@ Completion criteria:
 - No arbitrary browser-to-shell or unrestricted remote command execution
   is introduced.
 - Diagnostic activity is auditable and customer-controlled.
+- Real-time diagnostic events are authenticated, authorized and tenant-isolated.
 
 ## Phase 8 — Intelligent troubleshooting and infrastructure insights
 
@@ -322,6 +387,8 @@ Objectives:
 - Consider integrations with external IT and infrastructure services.
 - Evaluate Windows and macOS monitoring agents.
 - Expand monitoring capabilities based on customer needs.
+- Evaluate enterprise identity requirements such as SSO and SCIM against
+  current provider capabilities, pricing and contractual requirements.
 
 Completion criteria:
 
@@ -332,6 +399,8 @@ Completion criteria:
 - Billing failures do not grant unauthorized access or silently corrupt state.
 - Integration credentials are protected and revocable.
 - Additional agents and integrations follow the same security standards.
+- Enterprise identity capabilities are implemented only after appropriate
+  technical, security and commercial review.
 
 ## Phase 10 — Production engineering, operational readiness and public launch
 
@@ -358,6 +427,11 @@ Objectives:
 - Validate billing and account lifecycle end to end.
 - Run production acceptance tests.
 - Establish customer support and rollback procedures.
+- Review authentication provider contractual requirements, data processing,
+  security documentation, service availability and pricing before launch.
+- Test real-time event delivery under expected concurrent dashboard loads.
+- Define a shared event distribution strategy before running multiple
+  application instances that must deliver the same organization events.
 
 Completion criteria:
 
@@ -387,6 +461,12 @@ foundation:
   reliable.
 - Advanced integrations before authentication, tenant isolation and
   credential management are proven.
+- Replacing PostgreSQL or introducing additional infrastructure without a
+  demonstrated requirement.
+- Treating WorkOS identity claims as a replacement for Pulse Metrics
+  application authorization.
+- Reusing browser sessions as machine-agent credentials.
+- Broadcasting organization data to every connected WebSocket client.
 
 These boundaries may be reconsidered through documented architecture
 decisions and appropriate security review.
@@ -395,30 +475,29 @@ decisions and appropriate security review.
 
 The immediate work sequence is:
 
-1. Preserve and verify the PostgreSQL security foundation and its repeatable
-   tenant-isolation tests.
-2. Complete the local Linux agent runner verification, including graceful
-   shutdown, lint, unit tests and a production build.
-3. Refine telemetry semantics and collection accuracy, especially network
-   interface accounting and the distinction between cumulative byte counters
-   and transfer rates.
-4. Complete Phase 2 authentication, trusted identity and organization access.
-5. Complete Phase 3 secure agent enrollment, credential issuance, rotation
-   and revocation.
-6. Implement authenticated, tenant-authorized telemetry ingestion and
-   persistence.
-7. Remove prototype-only simulated telemetry, hardcoded host assumptions,
-   SSH-based monitoring and arbitrary remote command execution from the
-   customer-facing application.
-8. Connect the dashboard to real, tenant-authorized persisted telemetry.
-9. Test the complete monitoring workflow before expanding functionality.
+1. Preserve and verify the completed PostgreSQL security foundation.
+2. Complete inspection of the existing prototype backend and frontend.
+3. Record and maintain the accepted authentication and real-time architecture
+   decisions.
+4. Review WorkOS AuthKit integration requirements against the existing
+   Express, React/Vite and PostgreSQL architecture.
+5. Design trusted server-side identity mapping and secure session handling.
+6. Implement authentication, organization membership and server-side
+   authorization.
+7. Secure browser-facing WebSocket authentication and organization
+   subscriptions.
+8. Remove the prototype's arbitrary SSH/WebSocket command execution and
+   fabricated host-management paths.
+9. Complete secure agent enrollment and machine credential infrastructure.
+10. Define and implement authenticated agent telemetry ingestion.
+11. Replace simulated telemetry with genuine measurements and connect the
+    dashboard to authorized tenant data.
+12. Test the complete monitoring workflow before expanding functionality.
 
-Local Linux collection is now implemented as an initial development
-foundation. It is not a substitute for authenticated agent enrollment or
-SaaS ingestion. The current prototype must not be treated as production-ready
-simply because the dashboard renders, refreshes or a local collector emits
-readings. Real telemetry, authenticated access, tenant isolation and failure
-handling must all be independently verified.
+The current prototype must not be treated as production-ready simply because
+the dashboard renders or refreshes. Real telemetry, authenticated access,
+tenant isolation, authorized real-time delivery and failure handling must all
+be independently verified.
 
 ## Roadmap change control
 
