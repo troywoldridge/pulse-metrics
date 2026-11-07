@@ -1,90 +1,116 @@
-# PulseMetrics 🚀
+# Pulse Metrics
 
-> **High-Precision Real-Time Server & Linux PC Monitoring Dashboard**
-> Featuring tactile analog dials, SVG vector gauges, SSH streaming, WebSocket telemetry, historical trend analytics, statistical anomaly detection, and per-host threshold alerting.
+Pulse Metrics is being developed as a commercial, multi-tenant infrastructure
+monitoring platform. The intended product will let customers monitor computers
+and servers through authenticated agents, with organization-scoped access to
+live and historical telemetry.
 
----
+**Development status: early foundation work. This repository is not
+production-ready and must not be exposed as a public monitoring service.**
 
-## ✨ Features
+## Product direction
 
-- **Real-Time Dials & Gauges**:
-  - **CPU Speedometer**: Sweeping analog needle dial with core load breakdowns, load averages, and thermal telemetry.
-  - **Memory & Swap Concentric Gauge**: Multi-ring SVG gauge showing RAM and Swap utilization with cache statistics.
-  - **Dual Bandwidth Dial**: Ingress and egress network throughput visualization in real-time.
-  - **Disk I/O & Storage**: Live read/write throughput rates and mount-point capacity gauges.
-  - **Latency & Connection Health**: Real-time ping jitter, RTT millisecond distribution, and SSH link diagnostics.
-  - **Internet Speed Test**: Integrated on-demand bandwidth benchmarking (Download, Upload, Ping, Jitter).
+The planned architecture is:
 
-- **Multi-Host & SSH Streaming**:
-  - Monitors local Linux system (`linux-pc`) and remote target machines (`work-server` via shortcut `ssh work`).
-  - Remote SSH console drawer with interactive shell command execution.
-  - Automatic reconnection, heartbeat detection, and connection health rating (Excellent, Good, Degraded, Poor, Offline).
+- React and TypeScript customer dashboard.
+- Node.js and Express API.
+- PostgreSQL persistence with Drizzle ORM migrations.
+- Organization-based customer and device ownership.
+- Authenticated outbound monitoring agents.
+- Transaction-scoped PostgreSQL Row-Level Security (RLS).
+- Validated, versioned telemetry ingestion.
+- Auditable customer and administrative actions.
 
-- **Historical Performance & Anomaly Analytics**:
-  - Time ranges: **15m**, **1h**, **24h**, and **7d**.
-  - **Linear Regression Trend Lines**: Directional slope trajectory analysis with % change.
-  - **Rolling Z-Score Anomaly Detection**: Highlights statistical surges and plunges with configurable standard deviation sensitivity (1.8σ, 2.2σ, 3.0σ).
-  - Interactive incident table with deviation magnitude and baseline comparisons.
+The implementation will remain extensible for additional operating systems,
+alerts, reports, integrations, and commercial plans without making those
+features prerequisites for a reliable first release.
 
-- **Custom Alert Thresholds**:
-  - User-configurable Warning and Critical thresholds for CPU, RAM, and Disk per host.
-  - Colored alert zones on gauge dials (Normal, Warning, Critical arc bands).
-  - Horizontal reference lines and shaded alert bands on historical charts.
-  - Persistent state in `localStorage`.
+## Current repository status
 
-- **Modern Architecture**:
-  - Dark mode by default with light mode toggle.
-  - Customizable widget layout and visibility modal.
-  - Responsive layout built with React 19, TypeScript, Tailwind CSS v4, and Node.js WebSocket engine.
+The existing React dashboard and original Node.js service are a prototype.
+Some displayed values and historical points are simulated, and the legacy
+server still contains an unrestricted WebSocket command-execution path.
+Authentication, organization provisioning, agent enrollment, secure
+credential verification, tenant-aware telemetry ingestion, billing, and
+production authorization are not yet complete.
 
----
+Do not deploy this prototype to the public internet, accept customer data, or
+use it to administer production systems. The legacy command-execution path
+must be removed or replaced with narrowly authorized administrative actions
+before any public deployment.
 
-## 🛠️ Quick Start
+Development and test hosts are local infrastructure only. Their names,
+addresses, credentials, SSH configuration, and hardware details are not part
+of the commercial product configuration.
 
-### 1. Prerequisites
-- **Node.js** (v20+ recommended)
-- **OpenSSH Client** (for remote server SSH monitoring)
+## Requirements
 
-### 2. Install Dependencies
+- Node.js 22 or later.
+- npm.
+- PostgreSQL for database migration and integration work.
+
+## Run the existing UI prototype
+
+Install dependencies:
+
 ```bash
 npm install
 ```
 
-### 3. Run Development Server
+Start the local development server:
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 4. Build for Production
+The existing dashboard prototype is served at
+[http://localhost:3000](http://localhost:3000).
+
+This starts the prototype service; it does not mean database persistence,
+customer authentication, tenant isolation, or agent ingestion are connected.
+
+## Database foundation
+
+The initial database schema is in `src/db/schema.ts`. The lazy PostgreSQL
+client is in `src/db/client.ts`, and user-scoped tenant transactions are
+provided by `src/db/tenant-context.ts`.
+
+1. Copy `.env.example` to `.env`.
+2. Configure `DATABASE_URL` for a dedicated local development database.
+3. Install dependencies with `npm install` so `package-lock.json` is updated.
+4. Generate a migration with `npm run db:generate`.
+5. Review the generated SQL and snapshot files.
+6. Apply it only to the intended development database with `npm run db:migrate`.
+
+See [docs/database-foundation.md](docs/database-foundation.md) for the database
+roles, Row-Level Security requirements, secret handling, and current scope.
+
+Never commit `.env`, production credentials, enrollment tokens, agent
+credentials, or private keys.
+
+## Useful commands
+
 ```bash
-npm run build
-npm start
+npm run lint       # TypeScript check
+npm test           # Unit tests
+npm run build      # Production frontend build
+npm run db:generate
+npm run db:migrate
+npm run db:check
 ```
 
----
+## Security and release policy
 
-## 🔒 Configuration & SSH Shortcuts
+A successful frontend build is not a security review. Before public customer
+onboarding, the project must have verified authentication and authorization,
+tenant-isolation tests using the actual restricted runtime database role,
+secure agent enrollment and credential revocation, transport security,
+telemetry validation, rate limiting, audit coverage, backup and recovery
+procedures, and a documented data-retention policy.
 
-PulseMetrics connects to remote servers via OpenSSH or local probers:
-- To use the `ssh work` shortcut, ensure your `~/.ssh/config` has a matching Host entry:
-  ```sshconfig
-  Host work
-    HostName your.server.ip.or.domain
-    User your_username
-    IdentityFile ~/.ssh/id_ed25519
-  ```
+Report security issues privately to the project maintainers rather than
+publishing exploit details in public issues.
 
----
+## License
 
-## 🧪 Testing
-
-Run automated unit tests for math calculations and anomaly detection algorithms:
-```bash
-npx tsx --test src/utils/metrics-calculator.test.ts src/utils/anomaly-detector.test.ts
-```
-
----
-
-## 📄 License
 Apache-2.0
