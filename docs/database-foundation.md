@@ -7,7 +7,7 @@ monitored agents, enrollment credentials, telemetry samples, and audit events.
 ## Install and configure
 
 1. Copy `.env.example` to `.env`.
-2. Create a local PostgreSQL database and a dedicated migration account.
+2. Create a local PostgreSQL database and a dedicated local migration account.
 3. Set `DATABASE_URL` to the local connection URL.
 4. Run `npm install` after pulling the branch so package-lock.json matches
    package.json.
@@ -33,15 +33,20 @@ certificate and a hostname covered by that certificate.
 
 ## Row-Level Security
 
-Tenant-owned tables have PostgreSQL Row-Level Security policies. Tenant
-queries must use `withOrganizationContext()`, which sets these values with
-transaction-local `set_config(..., true)` calls:
+Tenant-owned tables have PostgreSQL Row-Level Security policies. User-initiated
+tenant queries must use `withOrganizationContext()`. That helper:
 
-- `app.current_organization_id`
-- `app.current_user_id`
+1. Starts a database transaction.
+2. Clears any organization context and sets the verified local user ID.
+3. Queries that user's own membership under the membership table's RLS policy.
+4. Rejects the request unless the user is a member of the requested organization.
+5. Sets the organization ID using transaction-local `set_config(..., true)`.
+6. Runs the requested database work in the same transaction.
 
 The settings are local to the transaction so pooled connections cannot retain
-one request's tenant context for a later request.
+one request's tenant context for a later request. Never accept a user ID from an
+untrusted browser field as proof of identity; it must come from a verified
+authentication session.
 
 The application must still perform role-based authorization. RLS establishes
 the organization boundary; it does not decide whether a member is an owner,
@@ -50,6 +55,15 @@ administrator, member, or viewer.
 The runtime role must not have `BYPASSRLS`. Tenant isolation must be tested
 using the same role and connection path used by the application. Tests using a
 superuser or table owner do not prove tenant isolation.
+
+Initial organization provisioning is not implemented yet. It will need a
+separate, narrowly scoped flow that creates an organization and its first owner
+membership atomically after the user's identity has been verified. Do not
+bypass the membership check in `withOrganizationContext()` for provisioning.
+
+Agent ingestion will use a separate verified-agent context after a credential
+has been securely resolved. Do not reuse a browser user's context for agent
+requests.
 
 ## Identity and privacy
 
@@ -96,7 +110,8 @@ private keys, or raw command output.
 
 ## Current scope
 
-This foundation does not yet add signup, billing, session management, agent
-enrollment endpoints, credential verification, telemetry ingestion routes, or
-a production-ready API authorization layer. Those must be implemented and
-tested before customer onboarding or public deployment.
+This foundation does not yet add signup, billing, session management, first
+organization provisioning, agent enrollment endpoints, credential verification,
+telemetry ingestion routes, or a production-ready API authorization layer.
+Those must be implemented and tested before customer onboarding or public
+deployment.
