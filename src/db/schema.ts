@@ -27,9 +27,9 @@ import {
  * Tenant boundaries are RESTRICTIVE policies. This matters because
  * PostgreSQL combines permissive policies with OR: a future permissive
  * policy must never be able to widen access beyond these tenant predicates.
- * Secret tables use restrictive false policies and intentionally have no
- * permissive policies, so access remains denied even if a permissive policy
- * is accidentally added later.
+ * Enrollment and credential tables enable RLS with no policies. PostgreSQL's
+ * default-deny behavior blocks normal row access until a narrowly scoped
+ * access policy is explicitly introduced.
  */
 const activeOrganizationId = sql`NULLIF(current_setting('app.current_organization_id', true), '')::uuid`;
 const activeUserId = sql`NULLIF(current_setting('app.current_user_id', true), '')::uuid`;
@@ -293,16 +293,8 @@ export const agentEnrollmentTokens = pgTable(
       "agent_enrollment_tokens_usage_valid",
       sql`${table.maxUses} > 0 AND ${table.uses} >= 0 AND ${table.uses} <= ${table.maxUses}`,
     ),
-    // No permissive policy: this table is default-deny. The restrictive
-    // policy also prevents a later permissive policy from opening access.
-    pgPolicy("agent_enrollment_tokens_deny_direct_access", {
-      as: "restrictive",
-      for: "all",
-      using: sql`false`,
-      withCheck: sql`false`,
-    }),
   ],
-);
+).enableRLS();
 
 export const agentCredentials = pgTable(
   "agent_credentials",
@@ -347,14 +339,8 @@ export const agentCredentials = pgTable(
       "agent_credentials_hash_format",
       sql`${table.tokenHash} ~ '^[a-f0-9]{64}$'`,
     ),
-    pgPolicy("agent_credentials_deny_direct_access", {
-      as: "restrictive",
-      for: "all",
-      using: sql`false`,
-      withCheck: sql`false`,
-    }),
   ],
-);
+).enableRLS();
 
 export const telemetrySamples = pgTable(
   "telemetry_samples",
@@ -479,6 +465,30 @@ export const auditEvents = pgTable(
     check(
       "audit_events_metadata_object",
       sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+    check(
+      "audit_events_metadata_size",
+      sql`octet_length(${table.metadata}::text) <= 262144`,
+    ),
+    check(
+      "audit_events_actor_consistency",
+      sql`
+        (
+          ${table.actorType} = 'user'
+          AND ${table.actorUserId} IS NOT NULL
+          AND ${table.actorAgentId} IS NULL
+        )
+        OR (
+          ${table.actorType} = 'agent'
+          AND ${table.actorUserId} IS NULL
+          AND ${table.actorAgentId} IS NOT NULL
+        )
+        OR (
+          ${table.actorType} = 'system'
+          AND ${table.actorUserId} IS NULL
+          AND ${table.actorAgentId} IS NULL
+        )
+      `,
     ),
     pgPolicy("audit_events_tenant_boundary", {
       as: "restrictive",
