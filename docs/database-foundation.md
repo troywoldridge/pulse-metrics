@@ -44,14 +44,12 @@ A hostname mismatch or untrusted certificate must fail closed.
 
 ## Explicit role and grant plan
 
-The following is the initial local-development role model. Run role creation
-while connected to the dedicated `pulse_metrics` database as a PostgreSQL
-administrator. Choose passwords interactively with psql's `\password`
-command; never put passwords in this document, shell history, source control,
-or connection URLs that may be logged.
+This is the initial local-development role model for a dedicated database.
+First inspect the cluster to confirm these role names and the database name do
+not already exist. Do not alter or reuse an existing role or database belonging
+to another application.
 
-Create the two login roles as a PostgreSQL administrator. These roles are
-specific to this database; do not reuse them for other applications:
+Run the bootstrap as the local PostgreSQL cluster administrator:
 
 ```sql
 CREATE ROLE pulse_metrics_migrator
@@ -60,64 +58,65 @@ CREATE ROLE pulse_metrics_migrator
 CREATE ROLE pulse_metrics_app
   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
-GRANT CONNECT ON DATABASE pulse_metrics
-  TO pulse_metrics_migrator, pulse_metrics_app;
-
--- Drizzle Kit's PostgreSQL migrator issues CREATE SCHEMA IF NOT EXISTS for
--- its configured migration-ledger schema. The config pins that schema to
--- public, so grant schema-creation privilege only to the migration role.
--- This does NOT grant CREATEDB or CREATEROLE.
-GRANT CREATE ON DATABASE pulse_metrics TO pulse_metrics_migrator;
-
--- Keep the public schema usable, but prevent arbitrary database users
--- from creating objects there.
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-
--- Migrations create and own tables, types, indexes, policies and the ledger.
-GRANT USAGE, CREATE ON SCHEMA public TO pulse_metrics_migrator;
-
--- The running API can resolve objects but cannot create or alter them.
-GRANT USAGE ON SCHEMA public TO pulse_metrics_app;
-
--- Make the runtime role's object resolution deterministic. User-defined
--- migration SQL uses unqualified table names and must land in public.
-ALTER ROLE pulse_metrics_migrator IN DATABASE pulse_metrics
-  SET search_path = public;
-ALTER ROLE pulse_metrics_app IN DATABASE pulse_metrics
-  SET search_path = public;
-
--- Make future objects created by the migration role private unless explicitly
--- granted after review. The migration ledger is also in public, so these
--- defaults protect it from PUBLIC and the ordinary runtime role.
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
-  REVOKE ALL ON TABLES FROM PUBLIC, pulse_metrics_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
-  REVOKE ALL ON SEQUENCES FROM PUBLIC, pulse_metrics_app;
-
--- Function EXECUTE is granted to PUBLIC by PostgreSQL by default.
--- This must be revoked globally; a schema-scoped revoke cannot cancel
--- the global default privilege.
-ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator
-  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+CREATE DATABASE pulse_metrics OWNER postgres;
 ```
 
-Set each password interactively in the same psql session. Do not put passwords
-in SQL files, shell history, source control, or connection URLs that may be
-logged:
+Set each role's password interactively in psql, not in SQL or shell history:
 
 ```text
 \\password pulse_metrics_migrator
 \\password pulse_metrics_app
 ```
 
-The migration URL must authenticate as `pulse_metrics_migrator`; the API URL
-must authenticate as `pulse_metrics_app`. Drizzle's migration ledger is
-explicitly configured as `public.__drizzle_migrations`, not the default
-`drizzle.__drizzle_migrations`; the default table/sequence privileges above
-keep that ledger private from the API role. URL-encode reserved characters in
-passwords when building PostgreSQL connection URLs. Do not grant either login
-membership in privileged roles. Do not make the API role a member of the
-migration role.
+Connect to the new database as the administrator:
+
+```text
+\\connect pulse_metrics
+```
+
+Then apply the database and schema privileges:
+
+```sql
+-- This is a dedicated database. Remove the default PUBLIC connection and
+-- temporary-table privileges, then grant connection only to the two roles.
+REVOKE CONNECT, TEMPORARY ON DATABASE pulse_metrics FROM PUBLIC;
+GRANT CONNECT ON DATABASE pulse_metrics
+  TO pulse_metrics_migrator, pulse_metrics_app;
+
+-- Drizzle's migrator may issue CREATE SCHEMA IF NOT EXISTS for the configured
+-- migration-ledger schema. Allow only the migration role to create schemas.
+GRANT CREATE ON DATABASE pulse_metrics TO pulse_metrics_migrator;
+
+-- PostgreSQL 15+ restricts CREATE in public by default. Keep it that way for
+-- PUBLIC and grant schema creation only to the migration role.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO pulse_metrics_migrator;
+GRANT USAGE ON SCHEMA public TO pulse_metrics_app;
+
+-- Fix name resolution; application SQL should not depend on an ambient path.
+ALTER ROLE pulse_metrics_migrator IN DATABASE pulse_metrics
+  SET search_path = public;
+ALTER ROLE pulse_metrics_app IN DATABASE pulse_metrics
+  SET search_path = public;
+
+-- Make future objects created by the migration role private unless explicitly
+-- granted after review. The migration ledger is public.__drizzle_migrations.
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+  REVOKE ALL ON TABLES FROM PUBLIC, pulse_metrics_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator IN SCHEMA public
+  REVOKE ALL ON SEQUENCES FROM PUBLIC, pulse_metrics_app;
+
+-- PostgreSQL grants EXECUTE on new functions to PUBLIC by default. This
+-- global revoke cannot be replaced by a schema-scoped revoke.
+ALTER DEFAULT PRIVILEGES FOR ROLE pulse_metrics_migrator
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+```
+
+The Drizzle config pins the migration ledger to
+`public.__drizzle_migrations`. The migration connection must authenticate as
+`pulse_metrics_migrator`; the API connection must authenticate as
+`pulse_metrics_app`. Do not grant either login membership in privileged
+roles, and never make the API role a member of the migration role.
 
 After the reviewed migration has been applied, grant the ordinary API role
 only its initial read and append operations:
@@ -139,6 +138,12 @@ TO pulse_metrics_app;
 
 GRANT USAGE, SELECT ON SEQUENCE
   public.telemetry_samples_id_seq
+TO pulse_metrics_app;
+
+GRANT USAGE ON TYPE
+  public.agent_status,
+  public.audit_actor_type,
+  public.membership_role
 TO pulse_metrics_app;
 
 -- The secret tables remain inaccessible to the ordinary API role.
@@ -163,13 +168,12 @@ introduced alongside a narrowly scoped credential-verification operation and
 security tests; it is not granted direct secret-table access in this initial
 foundation.
 
-Before using these statements, verify that the target is the dedicated
-`pulse_metrics` development database and that the schema is `public`. Do not
-run them against any existing production database or a database used by
-unrelated services. Hosted PostgreSQL providers may impose different database
-and schema ownership rules; adapt the administrator setup to the provider's
-documented model while preserving the separation of runtime and migration
-roles.
+Before executing any bootstrap command, confirm that the target is the intended
+local PostgreSQL cluster and that the `pulse_metrics` database is absent. The
+commands must not be run against a production database or a cluster hosting
+unrelated applications. Hosted PostgreSQL providers may require a different
+administrator/bootstrap model; preserve the separation of migration and
+runtime roles when adapting it.
 
 ## Row-Level Security
 
