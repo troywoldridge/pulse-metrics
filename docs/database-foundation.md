@@ -48,6 +48,10 @@ one request's tenant context for a later request. Never accept a user ID from an
 untrusted browser field as proof of identity; it must come from a verified
 authentication session.
 
+The application runtime can read a user's own identity row but cannot create
+or update identity-provider subjects or verified email fields through ordinary
+table access. A trusted authentication adapter must own identity synchronization.
+
 The application must still perform role-based authorization. RLS establishes
 the organization boundary; it does not decide whether a member is an owner,
 administrator, member, or viewer.
@@ -74,7 +78,9 @@ to a local user.
 
 Global user profiles are visible only to the user themselves. Organization
 memberships have a tenant-scoped display name so ordinary team views do not
-need to expose a user's global email address to every organization.
+need to expose a user's global email address to every organization. The
+organization lookup flow should first resolve the user's memberships and then
+read each organization through a membership-verified tenant transaction.
 
 ## Agent secrets
 
