@@ -31,7 +31,10 @@ import {
   ShieldCheck,
   Zap,
   Calendar,
+  LogIn,
+  LogOut,
 } from 'lucide-react';
+import { useAuth } from '@workos-inc/authkit-react';
 
 const DEFAULT_HOST_THRESHOLDS: HostThresholdMap = {
   'linux-pc': {
@@ -58,6 +61,7 @@ const DEFAULT_WIDGETS: WidgetLayoutConfig[] = [
 ];
 
 export default function App() {
+  const { user, isLoading: authLoading, signIn, signOut } = useAuth();
   const [hosts, setHosts] = useState<Record<string, HostMetrics>>({});
   const [activeHostId, setActiveHostId] = useState<string>('all');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
@@ -385,6 +389,32 @@ export default function App() {
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
           </button>
+
+          {/* Account (WorkOS AuthKit) */}
+          {!authLoading &&
+            (user ? (
+              <div className="flex items-center gap-2">
+                <span className="hidden lg:inline text-[11px] font-mono text-neutral-400 max-w-[180px] truncate" title={user.email}>
+                  {user.email}
+                </span>
+                <button
+                  onClick={() => signOut()}
+                  className="p-2 rounded-lg bg-neutral-800/80 hover:bg-neutral-700 text-neutral-300 border border-neutral-700/60 transition-all cursor-pointer"
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => signIn()}
+                className="px-3 py-1.5 text-xs font-medium text-neutral-200 bg-neutral-800/80 hover:bg-neutral-700 border border-neutral-700/60 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Sign in</span>
+              </button>
+            ))}
         </div>
       </header>
 

@@ -9,6 +9,7 @@ import { promisify } from 'util';
 import { WebSocketServer, WebSocket } from 'ws';
 import { HostMetrics, ProcessItem, InternetSpeedMetrics, HistoricalDataPoint } from './src/types/metrics.js';
 import { queryHistoricalData, appendLivePoint } from './src/server/historical-store.js';
+import { createWorkOSVerifier, readWorkOSAuthConfig, requireWorkOSUser } from './src/server/auth/workos-auth.js';
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -18,8 +19,31 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json());
 
+// The only public API route: a minimal liveness check, no tenant data.
+app.get('/api/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: 'ok' });
+});
+
+// Authenticate every other /api request before route handlers.
+// Database identity mapping and organization access are NOT ready yet.
+app.use('/api', requireWorkOSUser(createWorkOSVerifier(readWorkOSAuthConfig())));
+app.get('/api/auth/me', (_req, res) => {
+  const identity = res.locals.authenticatedIdentity;
+  res.json({ provider: identity.provider, subject: identity.subject });
+});
+// Fail closed: old shared history/host APIs have no tenant authorization.
+app.use('/api', (_req, res) => {
+  res.status(503).json({ error: 'organization_authorization_pending' });
+});
+
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// No WebSocket upgrade is accepted until bearer-to-ticket exchange and
+// organization-scoped subscriptions have been implemented and tested.
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (_request, socket) => {
+  socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+});
 
 // State storage
 let pollingIntervalMs = 1000;
@@ -549,7 +573,9 @@ function startCollector() {
   }, pollingIntervalMs);
 }
 
-startCollector();
+// Prototype collector (including SSH probes and fabricated metrics) is
+// disabled until the secure agent ingestion path replaces it.
+// startCollector();
 
 // WebSocket message handling
 wss.on('connection', (ws) => {
