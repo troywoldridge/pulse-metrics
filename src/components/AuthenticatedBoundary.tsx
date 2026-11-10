@@ -3,8 +3,10 @@ import { useAuth } from '@workos-inc/authkit-react';
 
 type VerificationState = 'checking' | 'verified' | 'rejected' | 'unavailable';
 
-/** A deliberate holding screen. The prototype dashboard cannot render until
- * organization provisioning and tenant authorization are actually ready.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** A holding screen. The old monitoring dashboard stays locked until
+ * organization membership, role authorization and tenant-safe APIs exist.
  */
 export function AuthenticatedBoundary() {
   const { user, isLoading, signIn, signOut, getAccessToken } = useAuth();
@@ -37,8 +39,10 @@ export function AuthenticatedBoundary() {
           return;
         }
         const result: unknown = await response.json();
-        const identity = result as { provider?: string; subject?: string };
-        setVerification(identity?.provider === 'workos' && identity.subject === user?.id
+        const identity = result as { provider?: string; subject?: string; userId?: string };
+        setVerification(identity?.provider === 'workos' &&
+          identity.subject === user?.id &&
+          typeof identity.userId === 'string' && UUID.test(identity.userId)
           ? 'verified'
           : 'rejected');
       } catch {
@@ -53,12 +57,12 @@ export function AuthenticatedBoundary() {
   const message = !user
     ? 'Sign in to continue to Pulse Metrics.'
     : verification === 'verified'
-      ? 'Your identity is verified. Organization provisioning and tenant-safe monitoring are the next milestone. The prototype dashboard remains locked.'
+      ? 'Your WorkOS identity is linked to your Pulse Metrics account. Organization onboarding is next. The prototype dashboard remains locked until tenant authorization is complete.'
       : verification === 'checking'
-        ? 'Checking your session securely with the Pulse Metrics API…'
+        ? 'Securely verifying your session and linking your account…'
         : verification === 'rejected'
-          ? 'The server could not validate your session. Sign out and sign in again.'
-          : 'Authentication verification is currently unavailable. Review local API configuration or try again.';
+          ? 'The server could not validate your session and identity. Sign out and sign in again.'
+          : 'Account verification or provisioning is temporarily unavailable. Check the local API and database connection, then retry.';
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-neutral-950 px-5 text-neutral-100">
@@ -76,7 +80,7 @@ export function AuthenticatedBoundary() {
             </button>
           )}
           {!isLoading && user && verification !== 'checking' && verification !== 'verified' && (
-            <button type="button" onClick={() => setAttempt((count) => count + 1)}
+            <button type="button" onClick={() => setAttempt(count => count + 1)}
               className="rounded-lg border border-neutral-600 px-5 py-2.5 hover:bg-neutral-800">
               Retry verification
             </button>

@@ -10,6 +10,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { HostMetrics, ProcessItem, InternetSpeedMetrics, HistoricalDataPoint } from './src/types/metrics.js';
 import { queryHistoricalData, appendLivePoint } from './src/server/historical-store.js';
 import { createWorkOSVerifier, readWorkOSAuthConfig, requireWorkOSUser } from './src/server/auth/workos-auth.js';
+import { createIdentityRoute } from './src/server/auth/identity-route.js';
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -26,12 +27,9 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Authenticate every other /api request before route handlers.
-// Database identity mapping and organization access are NOT ready yet.
+// The verified identity maps to an internal user; organization authorization is still pending.
 app.use('/api', requireWorkOSUser(createWorkOSVerifier(readWorkOSAuthConfig())));
-app.get('/api/auth/me', (_req, res) => {
-  const identity = res.locals.authenticatedIdentity;
-  res.json({ provider: identity.provider, subject: identity.subject });
-});
+app.get('/api/auth/me', createIdentityRoute());
 // Fail closed: old shared history/host APIs have no tenant authorization.
 app.use('/api', (_req, res) => {
   res.status(503).json({ error: 'organization_authorization_pending' });
