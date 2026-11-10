@@ -12,6 +12,7 @@ import { queryHistoricalData, appendLivePoint } from './src/server/historical-st
 import { createWorkOSVerifier, readWorkOSAuthConfig, requireWorkOSUser } from './src/server/auth/workos-auth.js';
 import { createIdentityRoute } from './src/server/auth/identity-route.js';
 import { createCreateOrganizationRoute, createListOrganizationsRoute } from './src/server/auth/organization-route.js';
+import { createMembershipRosterRoute } from './src/server/auth/organization-membership-route.js';
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +34,7 @@ app.use('/api', requireWorkOSUser(createWorkOSVerifier(readWorkOSAuthConfig())))
 app.get('/api/auth/me', createIdentityRoute());
 app.get('/api/organizations', createListOrganizationsRoute());
 app.post('/api/organizations', createCreateOrganizationRoute());
+app.get('/api/organizations/:organizationId/members', createMembershipRosterRoute());
 // Fail closed: old shared history/host APIs have no tenant authorization.
 app.use('/api', (_req, res) => {
   res.status(503).json({ error: 'organization_authorization_pending' });
