@@ -14,6 +14,7 @@ import { createIdentityRoute } from './src/server/auth/identity-route.js';
 import { createCreateOrganizationRoute, createListOrganizationsRoute } from './src/server/auth/organization-route.js';
 import { createMembershipRosterRoute } from './src/server/auth/organization-membership-route.js';
 import { createInvitationIssuanceRoute } from './src/server/auth/invitation-issuance-route.js';
+import { createLiveInvitationRateLimitGuards } from './src/server/security/invitation-rate-limit-middleware.js';
 
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
@@ -31,12 +32,18 @@ app.get('/api/health', (_req, res) => {
 
 // Authenticate every other /api request before route handlers.
 // The verified identity maps to an internal user; organization authorization is still pending.
+// Persistent network quota is checked BEFORE the WorkOS bearer verifier.
+// Local-only, fail-closed without an explicit safe network mode and key.
+const invitationRateLimits = createLiveInvitationRateLimitGuards();
+app.post('/api/organizations/:organizationId/invitations', invitationRateLimits.network('issue'));
 app.use('/api', requireWorkOSUser(createWorkOSVerifier(readWorkOSAuthConfig())));
 app.get('/api/auth/me', createIdentityRoute());
 app.get('/api/organizations', createListOrganizationsRoute());
 app.post('/api/organizations', createCreateOrganizationRoute());
 app.get('/api/organizations/:organizationId/members', createMembershipRosterRoute());
-app.post('/api/organizations/:organizationId/invitations', createInvitationIssuanceRoute());
+// Actor quota applies only after the verified WorkOS identity is installed.
+app.post('/api/organizations/:organizationId/invitations',
+  invitationRateLimits.actor('issue'), createInvitationIssuanceRoute());
 // Fail closed: old shared history/host APIs have no tenant authorization.
 app.use('/api', (_req, res) => {
   res.status(503).json({ error: 'organization_authorization_pending' });
