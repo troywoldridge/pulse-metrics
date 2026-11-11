@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Phase 2E3C5B — Disposable PRIVATE PostgreSQL CLUSTER replay; NOT a second DB
+# Phase 2E3C5C1 — Versioned, checksummed disposable PostgreSQL replay.
+# Existing development database remains read-only; do not use for production.
 # inside the user's existing cluster. No TCP listener; roles never reach main.
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,6 +42,13 @@ d34fe9b8de7cec1e9109caefa7f33879f55188f00f051c8e2efb81d3bc4d4c9f  scripts/admin/
 HASHES
 
 echo 'PASS: foundational Drizzle SQL and six original privileged scripts unchanged'
+
+# Independently pinned manifest; no in-place source rewrites or arbitrary paths.
+MANIFEST_STEPS="$(node scripts/migrations/verify-manifest.mjs --tsv)" ||
+  fail 'Privileged SQL manifest verification failed'
+[[ "$(printf '%s\n' "$MANIFEST_STEPS" | wc -l)" -eq 6 ]] ||
+  fail 'Privileged manifest must list exactly six reviewed steps'
+echo 'PASS: versioned privileged SQL manifest, order and SHA-256 verified'
 
 # Local service inspection is read-only. This never obtains a production URL.
 MAIN_VERSION="$(sudo -u postgres psql -X -v ON_ERROR_STOP=1 -At -d pulse_metrics -c "SELECT current_setting('server_version_num')")" || fail 'Cannot inspect local baseline PostgreSQL'
@@ -155,8 +163,10 @@ REPLAY_INFO="$(sudo -u postgres psql -X -v ON_ERROR_STOP=1 -At \
 echo 'PASS: private data directory and Unix-only PostgreSQL connection verified'
 
 psql_admin() {
+  local replay_database="$1"
+  shift
   sudo -u postgres psql -X -v ON_ERROR_STOP=1 -P pager=off \
-    -h "$SOCKET" -p "$PORT" -U postgres -d "$1"
+    -h "$SOCKET" -p "$PORT" -U postgres -d "$replay_database" "$@"
 }
 
 echo '========== CREATE REPLAY-ONLY ROLES AND DATABASE =========='
@@ -171,13 +181,46 @@ PULSE_REPLAY_SOCKET="$SOCKET" PULSE_REPLAY_DATA="$DATA" PULSE_REPLAY_PORT="$PORT
 
 psql_admin pulse_metrics < scripts/replay/runtime-grants.sql
 
-echo '========== REPLAY SIX UNMODIFIED PRIVILEGED SQL SOURCES =========='
-for n in 001 002 003 004 005 006; do
-  mapfile -t sql_files < <(compgen -G "scripts/admin/${n}_*.sql" || true)
-  [[ "${#sql_files[@]}" -eq 1 ]] || fail "Expected one administrator source with prefix $n"
-  echo "Applying $n to isolated database only"
-  psql_admin pulse_metrics < "${sql_files[0]}"
-done
+echo '========== INSTALL PRIVATE REPLAY MIGRATION LEDGER =========='
+psql_admin pulse_metrics < scripts/migrations/ledger-bootstrap.sql
+
+# Never rerun a non-idempotent original security bootstrap when its verified
+# receipt is present. If the script succeeds but receipt insertion fails, the
+# next invocation refuses to overwrite existing SQL objects: manual review is
+# required. That crash gap is deliberately not concealed by fake ledger rows.
+apply_privileged_steps() {
+  local pass="$1"
+  local version source digest recorded
+  while IFS=$'\t' read -r version source digest; do
+    [[ "$version" =~ ^00[1-6]$ &&
+       "$source" =~ ^scripts/admin/00[1-6]_[a-z_]+[.]sql$ &&
+       "$source" == scripts/admin/${version}_* &&
+       "$digest" =~ ^[0-9a-f]{64}$ ]] || fail 'Invalid manifest output; refusing admin SQL execution'
+    recorded="$(psql_admin pulse_metrics -Atq -v "version=$version" <<'SQL'
+SELECT source_sha256 FROM pulse_security_migrations.applied_privileged_steps
+WHERE version=:'version';
+SQL
+)" || fail 'Could not inspect isolated privileged ledger'
+    if [[ -n "$recorded" ]]; then
+      [[ "$recorded" == "$digest" ]] || fail "Checksum drift in recorded step $version"
+      echo "SKIP $version: previously recorded with matching reviewed SHA-256"
+      continue
+    fi
+    [[ "$pass" == 'initial' ]] || fail "Step $version missing on repeated pass; refusing SQL replay"
+    echo "Applying original reviewed $version in isolated cluster only"
+    psql_admin pulse_metrics < "$source"
+    psql_admin pulse_metrics -v "version=$version" -v "source_path=$source" -v "digest=$digest" \
+      < scripts/migrations/ledger-record.sql
+    echo "RECORDED $version: verified postconditions and source SHA-256"
+  done <<< "$MANIFEST_STEPS"
+}
+
+echo '========== REPLAY SIX REVIEWED PRIVILEGED SQL SOURCES =========='
+apply_privileged_steps initial
+
+echo '========== REPEAT DEPLOYMENT: SIX STEPS MUST SKIP =========='
+apply_privileged_steps repeated
+psql_admin pulse_metrics < scripts/migrations/ledger-audit.sql
 
 echo '========== VERIFY ISOLATED REPLAY SECURITY BASELINE =========='
 psql_admin pulse_metrics < scripts/audit/migration-security-invariants.sql
@@ -194,7 +237,12 @@ if psql -X -v ON_ERROR_STOP=1 -At -h "$SOCKET" -p "$PORT" \
   -c 'CREATE TABLE public.unauthorized_replay_probe (id integer)' >/dev/null 2>&1; then
   fail 'Runtime role unexpectedly creates schema objects'
 fi
-echo 'PASS: application role cannot read private counters or create tables'
+if psql -X -v ON_ERROR_STOP=1 -At -h "$SOCKET" -p "$PORT" \
+  -U pulse_metrics_app -d pulse_metrics \
+  -c 'SELECT * FROM pulse_security_migrations.applied_privileged_steps LIMIT 1' >/dev/null 2>&1; then
+  fail 'Runtime role unexpectedly reads private migration receipts'
+fi
+echo 'PASS: application role cannot read private counters, migration receipts or create tables'
 
 echo '========== COMPARE STRUCTURAL METADATA TO CURRENT BASELINE =========='
 # Main database is only read through the previous local administrator socket.
@@ -215,5 +263,5 @@ if [[ "$CURRENT_HASH" != "$REPLAY_HASH" ]]; then
 fi
 echo 'PASS: database catalog metadata matches the reviewed existing database'
 echo '========== FRESH CLUSTER REPLAY COMPLETED =========='
-echo 'PASS: real Drizzle replay, six security bootstraps, forced RLS, least privilege and structural comparison'
-echo 'NOTE: this is local replay verification, not an adopted production migration history.'
+echo 'PASS: real Drizzle migration, six checksummed privileged receipts, repeat-skip, forced RLS, least privilege and catalog parity'
+echo 'NOTE: existing database NOT stamped; fresh-cluster receipts are ephemeral, not adopted production history.'

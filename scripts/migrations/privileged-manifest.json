@@ -1,0 +1,60 @@
+{
+  "formatVersion": 1,
+  "kind": "pulse-privileged-admin-sql",
+  "database": "pulse_metrics",
+  "sourceBaselineCommit": "dbc00026c5f3820e04ff3eee4946d1b985b0e635",
+  "drizzle": {
+    "migration": {
+      "path": "drizzle/0000_damp_tomorrow_man.sql",
+      "sha256": "d49e23396a343852627ceab778521adaefc6382c2be6111bf83bf3e59ad870e1"
+    },
+    "journal": {
+      "path": "drizzle/meta/_journal.json",
+      "sha256": "ae17ed491915e7870467d73ca34cf9ac7c6d6157cc621986ceb3bf60999af26e"
+    }
+  },
+  "steps": [
+    {
+      "version": "001",
+      "name": "workos_identity_provisioning",
+      "path": "scripts/admin/001_workos_identity_provisioning.sql",
+      "sha256": "14f261b4bf7802a92e4c15d7f67cb563ad755fdf2bc4bcc1b7e39b8ad1d8aab7",
+      "expectedFunction": "public.resolve_workos_user(text)"
+    },
+    {
+      "version": "002",
+      "name": "organization_onboarding",
+      "path": "scripts/admin/002_organization_onboarding.sql",
+      "sha256": "89a0251114f1839fb8449c41f62cb8c4f2d197a34155595746b66bd183c785dc",
+      "expectedFunction": "public.create_workos_organization(text,text,text)"
+    },
+    {
+      "version": "003",
+      "name": "organization_invitations",
+      "path": "scripts/admin/003_organization_invitations.sql",
+      "sha256": "c07bb1a17375eb8b9522092b1d23a5f6aa4a21571c6e590aa34b3f0b27410e42",
+      "expectedFunction": "public.issue_organization_invitation(text,uuid,text,text,text,timestamptz)"
+    },
+    {
+      "version": "004",
+      "name": "organization_invitation_acceptance",
+      "path": "scripts/admin/004_organization_invitation_acceptance.sql",
+      "sha256": "d34fe9b8de7cec1e9109caefa7f33879f55188f00f051c8e2efb81d3bc4d4c9f",
+      "expectedFunction": "public.accept_organization_invitation(text,text)"
+    },
+    {
+      "version": "005",
+      "name": "workos_verified_email_sync",
+      "path": "scripts/admin/005_workos_verified_email_sync.sql",
+      "sha256": "0bf20d0d11ad87505e7a0f58b61b85c6bb26413baef925c34da1b209c4476121",
+      "expectedFunction": "public.sync_workos_verified_email(text,text)"
+    },
+    {
+      "version": "006",
+      "name": "invitation_rate_limits",
+      "path": "scripts/admin/006_invitation_rate_limits.sql",
+      "sha256": "597be8dfd60cff05947a1511f5ff6853bed6601b5e62bf9164f24f4943b33327",
+      "expectedFunction": "public.consume_invitation_rate_limit(text,text,text)"
+    }
+  ]
+}
