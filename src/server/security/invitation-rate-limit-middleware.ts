@@ -5,24 +5,19 @@ import {
   InvitationRateLimitExceededError,
   type InvitationAction,
 } from './invitation-rate-limit.js';
+import {
+  parseTrustedProxyCidrs,
+  resolveTrustedProxyClientAddress,
+  type TrustedProxyPolicy,
+} from './trusted-client-address.js';
 
-/**
- * Phase 2E3C4B3: local-only HTTP integration for the shared PostgreSQL limiter.
- * The network guard MUST run before bearer verification. The actor guard MUST
- * run after requireWorkOSUser() and uses ONLY res.locals.authenticatedIdentity.
- * Neither IP headers nor a browser-supplied user or invitation token is a key.
- *
- * DO NOT activate an Internet-facing endpoint with direct socket mode: a
- * reverse proxy would cause all users to share its IP. Production deliberately
- * fails closed until an independently reviewed trusted-proxy resolver exists.
- */
+/** Network guard before WorkOS JWT; actor guard after verified WorkOS JWT. */
 export type InvitationRateLimitChecks = Pick<
   ReturnType<typeof createLiveInvitationRateLimiter>,
   'checkNetwork' | 'checkActor'
 >;
 
-export type InvitationNetworkMode = 'local-direct-socket' | 'disabled';
-
+export type InvitationNetworkMode = 'local-direct-socket' | 'trusted-proxy' | 'disabled';
 const SUBJECT = /^user_[A-Za-z0-9_-]+$/;
 
 function isAuthenticatedIdentity(value: unknown): value is AuthenticatedIdentity {
@@ -47,30 +42,34 @@ function fail(res: Response, error: unknown): void {
   res.status(503).json({ error: 'invitation_rate_limit_unavailable' });
 }
 
+/** Production remains blocked until ingress and live WorkOS are verified.
+ * The trusted-proxy mode is exercised in local tests but is NOT a public
+ * activation switch. `req.ip` and unverified proxy headers are never used. */
 export function createInvitationRateLimitGuards(options: {
   checks: InvitationRateLimitChecks | null;
   networkMode: InvitationNetworkMode;
   production: boolean;
+  trustedProxies?: TrustedProxyPolicy | null;
 }) {
-  const { checks, networkMode, production } = options;
+  const { checks, networkMode, production, trustedProxies } = options;
+  const ready = () => !!checks && !production &&
+    (networkMode === 'local-direct-socket' ||
+      (networkMode === 'trusted-proxy' && !!trustedProxies));
+
   function network(action: InvitationAction): RequestHandler {
     return async (req, res, next) => {
       res.setHeader('Cache-Control', 'no-store');
-      // No safe proxy-chain resolver yet. Don't accept even an explicit
-      // local-direct-socket setting in production.
-      if (production || networkMode !== 'local-direct-socket' || !checks) {
-        fail(res, null);
-        return;
-      }
+      if (!ready() || !checks) { fail(res, null); return; }
       try {
-        // Never consult req.ip, X-Forwarded-For, Forwarded or X-Real-IP.
-        await checks.checkNetwork(action, req.socket.remoteAddress);
+        const address = networkMode === 'trusted-proxy'
+          ? resolveTrustedProxyClientAddress(req, trustedProxies!)
+          : req.socket.remoteAddress;
+        await checks.checkNetwork(action, address);
         next();
-      } catch (error) {
-        fail(res, error);
-      }
+      } catch (error) { fail(res, error); }
     };
   }
+
   function actor(action: InvitationAction): RequestHandler {
     return async (_req, res, next) => {
       res.setHeader('Cache-Control', 'no-store');
@@ -79,36 +78,36 @@ export function createInvitationRateLimitGuards(options: {
         res.status(401).json({ error: 'authentication_required' });
         return;
       }
-      if (!checks || production || networkMode !== 'local-direct-socket') {
-        fail(res, null);
-        return;
-      }
+      if (!ready() || !checks) { fail(res, null); return; }
       try {
         await checks.checkActor(action, identity);
         next();
-      } catch (error) {
-        fail(res, error);
-      }
+      } catch (error) { fail(res, error); }
     };
   }
   return { network, actor };
 }
 
-/** Missing/invalid secrets or unsupported network mode disable invitations,
- * not health or other unrelated APIs. No secret is included in any error. */
+/** Configuration failure affects only invitation operations, not health. */
 export function createLiveInvitationRateLimitGuards(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   let checks: InvitationRateLimitChecks | null = null;
+  let trustedProxies: TrustedProxyPolicy | null = null;
+  const mode = environment.INVITATION_RATE_LIMIT_NETWORK_MODE;
   try {
     checks = createLiveInvitationRateLimiter(environment);
+    if (mode === 'trusted-proxy') {
+      trustedProxies = parseTrustedProxyCidrs(environment.INVITATION_TRUSTED_PROXY_CIDRS);
+    }
   } catch {
-    // Intentionally fail closed for protected routes, not the health endpoint.
+    checks = null;
+    trustedProxies = null;
   }
+  const networkMode: InvitationNetworkMode =
+    mode === 'local-direct-socket' || mode === 'trusted-proxy' ? mode : 'disabled';
   return createInvitationRateLimitGuards({
-    checks,
-    networkMode: environment.INVITATION_RATE_LIMIT_NETWORK_MODE === 'local-direct-socket'
-      ? 'local-direct-socket' : 'disabled',
+    checks, trustedProxies, networkMode,
     production: environment.NODE_ENV === 'production',
   });
 }
