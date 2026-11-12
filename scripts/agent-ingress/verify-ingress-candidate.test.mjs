@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {CHECKPOINT,D9_DIGEST,D10_DIGEST,SQL_PATH,scanSql} from './verify-ingress-candidate.mjs';
+const sql=readFileSync(resolve(process.cwd(),SQL_PATH),'utf8');
+test('locks D10 to reviewed post-D9 Git checkpoint and D9 SQL hash',()=>{
+  assert.equal(CHECKPOINT,'0a128bbd49d302fbb6e4918412d5ba02c895d9d8');
+  assert.equal(D9_DIGEST,'273e571549fc5e12dcd5ce882cd64e801a5008f8492147d49a8afb03743922c8');
+  assert.equal(D10_DIGEST,'c4213f6dcf95353aad754f9d09f2e08785c42583b74e9b2a8122d96cc0a868d1');
+});
+test('D10 candidate contains all quota and security controls',()=>assert.equal(scanSql(sql).ok,true));
+test('detects missing transaction COMMIT',()=>assert.equal(scanSql(sql.replace(/COMMIT;/,'')).ok,false));
+test('detects missing forced RLS',()=>assert.equal(scanSql(sql.replace('FORCE ROW LEVEL SECURITY','ENABLE ROW LEVEL SECURITY')).ok,false));
+test('detects missing fixed search path',()=>assert.equal(scanSql(sql.replace('SET search_path=pg_catalog,pg_temp','')).ok,false));
+test('detects missing NOLOGIN',()=>assert.equal(scanSql(sql.replace('NOLOGIN NOINHERIT NOSUPERUSER','LOGIN INHERIT SUPERUSER')).ok,false));
+test('detects missing atomic UPSERT',()=>assert.equal(scanSql(sql.replace('ON CONFLICT (action,bucket_kind,bucket_digest) DO UPDATE','')).ok,false));
+test('detects removed receipt',()=>assert.equal(scanSql(sql.replace("VALUES ('0002','Versioned agent ingress distributed quota boundary');",'')).ok,false));
+test('detects improper broad role privilege',()=>assert.equal(scanSql(sql+'\nGRANT ALL ON pulse_agent_enrollment.ingress_rate_limits TO pulse_metrics_app;').ok,false));
+test('detects exposed direct table select',()=>assert.equal(scanSql(sql+'\nGRANT SELECT ON pulse_agent_enrollment.ingress_rate_limits TO pulse_metrics_app;').ok,false));
+test('detects deletion of network redemption constraint',()=>assert.equal(scanSql(sql.replace("p_action='redeem' AND p_kind='network'", "p_action='redeem'")).ok,false));

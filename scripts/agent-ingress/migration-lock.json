@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "phase": "2E3C5D10",
+  "kind": "review-only-agent-ingress-quota",
+  "checkpoint": "0a128bbd49d302fbb6e4918412d5ba02c895d9d8",
+  "d9Sha256": "273e571549fc5e12dcd5ce882cd64e801a5008f8492147d49a8afb03743922c8",
+  "d10Path": "scripts/agent-ingress/migrations/0002_agent_ingress_quota.sql",
+  "d10Sha256": "c4213f6dcf95353aad754f9d09f2e08785c42583b74e9b2a8122d96cc0a868d1"
+}
