@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "phase": "2E3C5D13",
+  "parentCommit": "d2f91c305703fe6d4ac713672c83f82bd41d9f6b",
+  "release": "REVIEW_ONLY",
+  "version": "0003",
+  "sqlPath": "scripts/agent-identity/migrations/0003_preallocated_identity.sql",
+  "sqlSha256": "c085dd674581abe6a636de8cd586e43de745d35ee965c0e141f8dc4015d3b406",
+  "publicEnrollment": "UNMOUNTED",
+  "agentTelemetryTransport": "LOCAL_ONLY",
+  "protectedGitBlobs": {
+    "server.ts": "b60547bda0c88d5f3976cba905ede367b38e9581",
+    "src/agent/run-linux-agent.ts": "6864599b0404aa0f1219344c862c40ec415e92a9",
+    "src/db/schema.ts": "cbdfb4e73f93fecc5c7460c63775e179e0bf66cd",
+    "scripts/run-all-tests.mjs": "c43adeb18b5732cec588300e9f2c992f40b11a5b",
+    "src/server/agent-enrollment-routes.ts": "6459ebfaeccc37a915a2dedd57e721a0f3f467aa",
+    "src/server/agent-enrollment-service.ts": "bf40133b0ba81149e35defab2586cb401de35d86",
+    "src/server/agent-credential-policy.ts": "f7ff4b52d98c7a25fd8058810529d33e3d3fa113",
+    "src/server/agent-enrollment-postgres-adapter.ts": "d9fb4937fb0ef9f65afb58ee669bfa7a20a35a84",
+    "src/agent/security/credential-vault.ts": "cad8a882397e931f177a1912bb37f03ff994076a",
+    "src/agent/security/machine-identity.ts": "39f875db0939c6e0c353e39f4e680b610d7369db",
+    "src/agent/enrollment/enrollment-workflow.ts": "be98746bfad5b77935c71b62e17e4ed6a026db28",
+    "src/agent/enrollment/https-redemption.ts": "c7de218267951d1bc1584cbd3f5fa355926d93ee",
+    "scripts/agent-enrollment/migrations/0001_agent_enrollment.sql": "8ff39fc2dd7a46b56e402568288081f174099a74",
+    "scripts/agent-ingress/migrations/0002_agent_ingress_quota.sql": "fb4bb2f766b28e9980282c15ff25304ec097925f",
+    "docs/security/AGENT-HTTPS-ENROLLMENT-D12.md": "3f17e1db8b33c4cbd5f4c6c758eb08f8fd6e4478",
+    "scripts/test-agent-ingress-rehearsal.sh": "b3ee3cc1c5ce136a196977b551e4791ba79fc505",
+    "scripts/agent-https/verify-foundation.mjs": "fe7a9eece09a968ad9a8aef07dfad9b756b5a6cf",
+    "package.json": "72bd8641c06aacb039cc4b5635a864eb8fd5fc28"
+  }
+}
