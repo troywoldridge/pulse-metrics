@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "phase": "2E3C5D14",
+  "parentCommit": "2f3f6dc61951fd61aa3d63466344295b5e197794",
+  "release": "REVIEW_ONLY",
+  "publicLaunch": "NO_GO",
+  "expectedTestCommand": "node scripts/run-all-tests.mjs",
+  "d13SqlSha256": "c085dd674581abe6a636de8cd586e43de745d35ee965c0e141f8dc4015d3b406",
+  "protectedGitBlobs": {
+    "server.ts": "b60547bda0c88d5f3976cba905ede367b38e9581",
+    "src/agent/run-linux-agent.ts": "6864599b0404aa0f1219344c862c40ec415e92a9",
+    "src/agent/security/credential-vault.ts": "cad8a882397e931f177a1912bb37f03ff994076a",
+    "src/agent/security/machine-identity.ts": "39f875db0939c6e0c353e39f4e680b610d7369db",
+    "src/agent/enrollment/https-redemption.ts": "c7de218267951d1bc1584cbd3f5fa355926d93ee",
+    "src/agent/enrollment/enrollment-workflow.ts": "be98746bfad5b77935c71b62e17e4ed6a026db28",
+    "src/server/agent-credential-policy.ts": "f7ff4b52d98c7a25fd8058810529d33e3d3fa113",
+    "src/server/agent-preauthorization.ts": "8f09d863ced00acbaf826fef8a3beee17f54d8d8",
+    "src/server/agent-preauthorization-routes.ts": "ed3229b5f7ea6cccfe6ee6c0ad16cc4e5802bcfc",
+    "scripts/agent-identity/migrations/0003_preallocated_identity.sql": "8e3d006bbcc7118656e193fcb4949aa4c9acc9e4",
+    "scripts/agent-identity/identity-source-lock.json": "3420425ed5036d37523951681701d7be72f327d0",
+    "scripts/agent-identity/verify-candidate.mjs": "ac48bb6200df7532fb73eb4b54c4d5d741b4d5fb",
+    "scripts/test-agent-identity-rehearsal.sh": "fa078be5433a4f6b9b1e79a9f9e44a412efdfd3c",
+    "scripts/run-all-tests.mjs": "c43adeb18b5732cec588300e9f2c992f40b11a5b",
+    "package.json": "72bd8641c06aacb039cc4b5635a864eb8fd5fc28",
+    "src/db/schema.ts": "cbdfb4e73f93fecc5c7460c63775e179e0bf66cd",
+    "docs/security/AGENT-PREALLOCATED-IDENTITY-D13.md": "5cb6ee2d0022fc75dcaca74e09bab3abffca7e68"
+  }
+}
