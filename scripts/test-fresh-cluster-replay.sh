@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2E3C5C1 — Versioned, checksummed disposable PostgreSQL replay.
+# Phase 2E3C5C2A — Versioned replay plus failure and drift rehearsals.
 # Existing development database remains read-only; do not use for production.
 # inside the user's existing cluster. No TCP listener; roles never reach main.
 set -Eeuo pipefail
@@ -207,6 +207,15 @@ SQL
       continue
     fi
     [[ "$pass" == 'initial' ]] || fail "Step $version missing on repeated pass; refusing SQL replay"
+    echo "Preflight reviewed step $version: reject unrecorded preexisting objects"
+    # Stream SQL as the invoking user: the postgres OS account cannot be
+    # assumed to traverse the project's private home directory.
+    {
+      printf 'BEGIN READ ONLY;\n'
+      printf "SELECT set_config('pulse.replay_step_version', '%s', true);\n" "$version"
+      cat scripts/migrations/step-preflight-assert.sql
+      printf 'COMMIT;\n'
+    } | psql_admin pulse_metrics -q
     echo "Applying original reviewed $version in isolated cluster only"
     psql_admin pulse_metrics < "$source"
     psql_admin pulse_metrics -v "version=$version" -v "source_path=$source" -v "digest=$digest" \
@@ -221,6 +230,54 @@ apply_privileged_steps initial
 echo '========== REPEAT DEPLOYMENT: SIX STEPS MUST SKIP =========='
 apply_privileged_steps repeated
 psql_admin pulse_metrics < scripts/migrations/ledger-audit.sql
+
+echo '========== REHEARSE MISSING RECEIPT AFTER SQL COMMIT =========='
+# Simulate the receipt-write crash gap in ONE uncommitted transaction.
+# The real preflight must refuse an existing function/table despite missing
+# receipt; psql disconnect automatically rolls the simulated deletion back.
+if {
+  printf 'BEGIN;\n'
+  printf "DELETE FROM pulse_security_migrations.applied_privileged_steps WHERE version='006';\n"
+  printf "SELECT set_config('pulse.replay_step_version', '006', true);\n"
+  cat scripts/migrations/step-preflight-assert.sql
+  printf 'COMMIT;\n'
+} | psql_admin pulse_metrics -q > "$CMP_DIR/missing-receipt.log" 2>&1; then
+  fail 'Missing-receipt replay was unexpectedly allowed'
+fi
+grep -Fq 'UNRECORDED_EXISTING_OBJECT' "$CMP_DIR/missing-receipt.log" ||
+  fail 'Missing-receipt preflight failed for a reason other than existing objects'
+psql_admin pulse_metrics -q < scripts/migrations/ledger-audit.sql
+echo 'PASS: missing receipt with installed objects refused; uncommitted simulation rolled back'
+
+echo '========== REHEARSE TRANSACTIONAL MIGRATION FAILURE =========='
+if psql_admin pulse_metrics -q > "$CMP_DIR/rollback.log" 2>&1 <<'SQL'
+BEGIN;
+SET LOCAL ROLE pulse_metrics_migrator;
+CREATE TABLE public.pulse_replay_failure_probe (id integer);
+DO $intentional$ BEGIN RAISE EXCEPTION 'INTENTIONAL_MIGRATION_ROLLBACK'; END $intentional$;
+COMMIT;
+SQL
+then
+  fail 'Intentional failure drill unexpectedly committed'
+fi
+grep -Fq 'INTENTIONAL_MIGRATION_ROLLBACK' "$CMP_DIR/rollback.log" ||
+  fail 'Failure drill failed for an unexpected reason'
+psql_admin pulse_metrics -q <<'SQL'
+BEGIN READ ONLY;
+DO $check$
+BEGIN
+ IF to_regclass('public.pulse_replay_failure_probe') IS NOT NULL THEN
+   RAISE EXCEPTION 'Transactional failure left a table behind';
+ END IF;
+ IF (SELECT count(*) FROM pulse_security_migrations.applied_privileged_steps)<>6
+    OR (SELECT count(*) FROM public.__drizzle_migrations)<>1 THEN
+   RAISE EXCEPTION 'Transactional failure altered migration history';
+ END IF;
+END;
+$check$;
+COMMIT;
+SQL
+echo 'PASS: intentional transactional DDL failure left no table and preserved all receipts'
 
 echo '========== VERIFY ISOLATED REPLAY SECURITY BASELINE =========='
 psql_admin pulse_metrics < scripts/audit/migration-security-invariants.sql
@@ -262,6 +319,39 @@ if [[ "$CURRENT_HASH" != "$REPLAY_HASH" ]]; then
   fail 'Structural parity needs investigation; original database left unchanged'
 fi
 echo 'PASS: database catalog metadata matches the reviewed existing database'
+
+echo '========== INJECT AND DETECT TEMPORARY PERMISSION DRIFT =========='
+# This grant is made ONLY on the previously verified disposable socket.
+# The test intentionally widens a restricted table privilege briefly so the
+# real structural manifest must detect it. No customer data is present.
+psql_admin pulse_metrics -q <<'SQL'
+BEGIN;
+GRANT SELECT ON public.invitation_rate_limits TO pulse_metrics_app;
+COMMIT;
+SQL
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -Atq \
+  -h "$SOCKET" -p "$PORT" -U postgres -d pulse_metrics \
+  < scripts/replay/catalog-manifest.sql > "$CMP_DIR/drifted.txt"
+if cmp -s "$CMP_DIR/current.txt" "$CMP_DIR/drifted.txt"; then
+  fail 'Injected unsafe runtime grant was NOT detected as drift'
+fi
+grep -Fq 'grant|invitation_rate_limits|SELECT|true' "$CMP_DIR/drifted.txt" ||
+  fail 'Expected unsafe direct-grant drift is missing from catalog metadata'
+echo 'PASS: structural catalog comparison detected an unsafe direct-table grant'
+psql_admin pulse_metrics -q <<'SQL'
+BEGIN;
+REVOKE SELECT ON public.invitation_rate_limits FROM pulse_metrics_app;
+COMMIT;
+SQL
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -Atq \
+  -h "$SOCKET" -p "$PORT" -U postgres -d pulse_metrics \
+  < scripts/replay/catalog-manifest.sql > "$CMP_DIR/restored.txt"
+if ! cmp -s "$CMP_DIR/current.txt" "$CMP_DIR/restored.txt"; then
+  fail 'Catalog did not return to the reviewed baseline after restoring grant'
+fi
+psql_admin pulse_metrics -q < scripts/migrations/ledger-audit.sql
+echo 'PASS: isolated grant removed; exact structural baseline restored'
+
 echo '========== FRESH CLUSTER REPLAY COMPLETED =========='
 echo 'PASS: real Drizzle migration, six checksummed privileged receipts, repeat-skip, forced RLS, least privilege and catalog parity'
 echo 'NOTE: existing database NOT stamped; fresh-cluster receipts are ephemeral, not adopted production history.'
