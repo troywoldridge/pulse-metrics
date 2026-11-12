@@ -89,6 +89,30 @@ GRANT INSERT (
 GRANT USAGE ON SEQUENCE public.telemetry_samples_id_seq
   TO pulse_metrics_telemetry_executor;
 
+-- D15B security boundary:
+-- The ordinary application role must not bypass authenticated
+-- machine ingestion by inserting directly into telemetry_samples.
+-- The dedicated SECURITY DEFINER executor retains its own
+-- narrowly scoped INSERT privileges.
+REVOKE INSERT ON public.telemetry_samples
+  FROM pulse_metrics_app;
+
+-- Fail closed if any table-level, inherited, or column-level
+-- application INSERT capability remains.
+DO $telemetry_insert_boundary$
+BEGIN
+  IF has_any_column_privilege(
+    'pulse_metrics_app',
+    'public.telemetry_samples',
+    'INSERT'
+  ) THEN
+    RAISE EXCEPTION
+      'REFUSE_D15B: application still has direct telemetry INSERT'
+      USING ERRCODE = '42501';
+  END IF;
+END;
+$telemetry_insert_boundary$;
+
 -- This ledger is managed by the privileged telemetry migration series.
 -- It must never be exposed through an ordinary application table grant.
 CREATE TABLE pulse_telemetry_ingestion.submissions (

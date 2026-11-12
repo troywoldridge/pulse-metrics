@@ -58,7 +58,7 @@ CANDIDATE='scripts/telemetry-ingestion/migrations/0001_telemetry_ingestion.sql'
   fail 'D15B candidate is missing or empty'
 
 # This is the exact currently reviewed candidate, not an approval pin.
-EXPECTED='5aaf960e061adf5c6883041fc81535dc2160091cedb29d599c11d374bfc0cd41'
+EXPECTED='5385963fc07671968d928210bd7b80fb14ff104947bdaa6d1c491f5466663157'
 
 ACTUAL="$(sha256sum "$CANDIDATE" | cut -d' ' -f1)"
 
@@ -480,6 +480,200 @@ timeout --signal=TERM --kill-after=10s 120s env \
 
 echo 'PASS: concurrent retries, conflicts and revocation tested'
 
+echo '========== D15B PRIVILEGE ESCALATION TEST =========='
+
+timeout --signal=TERM --kill-after=10s 120s env \
+  PULSE_AGENT_DISPOSABLE_ONLY=YES \
+  PULSE_AGENT_SOCKET="$SOCKET" \
+  PULSE_AGENT_DATA="$DATA" \
+  node scripts/telemetry-ingestion/privilege-integration.mjs
+
+echo '========== D15B ADMINISTRATOR PRIVILEGE AUDIT =========='
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/privilege-audit.sql
+
+echo 'PASS: D15B privilege abuse and grant audits passed'
+
+echo '========== D15B EXPIRED CREDENTIAL FIXTURE =========='
+
+psql_admin pulse_metrics -q <<'SQL'
+BEGIN;
+
+DO $fixture$
+DECLARE
+  v_agent uuid;
+  v_org uuid;
+  v_rotated boolean;
+BEGIN
+  SELECT a.id, a.organization_id
+  INTO STRICT v_agent, v_org
+  FROM public.monitored_agents a
+  JOIN public.organizations o
+    ON o.id = a.organization_id
+  WHERE o.slug = 'pulse-agent-b'
+    AND a.status = 'active';
+
+  SELECT pulse_agent_enrollment.rotate_credential(
+    'user_agent_owner_b',
+    v_org,
+    v_agent,
+    repeat('1',64),
+    repeat('1',12)
+  ) INTO v_rotated;
+
+  IF v_rotated IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Synthetic expiry rotation failed';
+  END IF;
+
+  UPDATE public.agent_credentials
+  SET expires_at = clock_timestamp() - interval '1 minute'
+  WHERE token_hash = repeat('1',64)
+    AND revoked_at IS NULL;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Synthetic expiry fixture missing';
+  END IF;
+END;
+$fixture$;
+
+COMMIT;
+SQL
+
+timeout --signal=TERM --kill-after=10s 120s env \
+  PULSE_AGENT_DISPOSABLE_ONLY=YES \
+  PULSE_AGENT_SOCKET="$SOCKET" \
+  PULSE_AGENT_DATA="$DATA" \
+  node scripts/telemetry-ingestion/credential-negative-integration.mjs expired
+
+echo '========== D15B MISSING SCOPE FIXTURE =========='
+
+psql_admin pulse_metrics -q <<'SQL'
+BEGIN;
+
+DO $fixture$
+DECLARE
+  v_agent uuid;
+  v_org uuid;
+  v_rotated boolean;
+BEGIN
+  SELECT a.id, a.organization_id
+  INTO STRICT v_agent, v_org
+  FROM public.monitored_agents a
+  JOIN public.organizations o
+    ON o.id = a.organization_id
+  WHERE o.slug = 'pulse-agent-b'
+    AND a.status = 'active';
+
+  SELECT pulse_agent_enrollment.rotate_credential(
+    'user_agent_owner_b',
+    v_org,
+    v_agent,
+    repeat('2',64),
+    repeat('2',12)
+  ) INTO v_rotated;
+
+  IF v_rotated IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Synthetic scope rotation failed';
+  END IF;
+
+  UPDATE public.agent_credentials
+  SET scopes = '[]'::jsonb
+  WHERE token_hash = repeat('2',64)
+    AND revoked_at IS NULL;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Synthetic scope fixture missing';
+  END IF;
+END;
+$fixture$;
+
+COMMIT;
+SQL
+
+timeout --signal=TERM --kill-after=10s 120s env \
+  PULSE_AGENT_DISPOSABLE_ONLY=YES \
+  PULSE_AGENT_SOCKET="$SOCKET" \
+  PULSE_AGENT_DATA="$DATA" \
+  node scripts/telemetry-ingestion/credential-negative-integration.mjs missing-scope
+
+echo 'PASS: credential expiry and scope enforcement verified'
+
+echo '========== D15B CONTROLLED ADMINISTRATIVE LOCK TEST =========='
+
+timeout --signal=TERM --kill-after=10s 120s env \
+  PULSE_AGENT_DISPOSABLE_ONLY=YES \
+  PULSE_AGENT_SOCKET="$SOCKET" \
+  PULSE_AGENT_DATA="$DATA" \
+  PULSE_AGENT_ORG_A="$ORG_A" \
+  PULSE_AGENT_ORG_B="$ORG_B" \
+  node scripts/telemetry-ingestion/lock-order-integration.mjs
+
+echo 'PASS: controlled revocation and rotation lock-ordering verified'
+
+echo '========== D15B DIRECT TELEMETRY INSERT BYPASS TEST =========='
+
+timeout --signal=TERM --kill-after=10s 120s env \
+  PULSE_AGENT_DISPOSABLE_ONLY=YES \
+  PULSE_AGENT_SOCKET="$SOCKET" \
+  PULSE_AGENT_DATA="$DATA" \
+  PULSE_AGENT_ORG_A="$ORG_A" \
+  node scripts/telemetry-ingestion/direct-insert-integration.mjs
+
+echo 'PASS: direct application telemetry INSERT bypass denied'
+
+echo '========== D15B LEGACY GRANT REGRESSION TEST =========='
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/grant-regression.sql
+
+echo 'PASS: legacy grant regression reproduced and rolled back'
+
+echo '========== D15B POST-MIGRATION RELEASE PERMISSION GATE =========='
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: D15B release permission gate accepted secure grants'
+
+echo '========== D15B RELEASE GATE NEGATIVE TEST =========='
+
+# This administrator wrapper is already restricted to the
+# verified disposable Unix-socket PostgreSQL cluster.
+# Deliberately reintroduce the old, unsafe permission.
+psql_admin pulse_metrics -q -c '
+  GRANT INSERT ON public.telemetry_samples
+  TO pulse_metrics_app;
+'
+
+# A secure release gate MUST refuse this database.
+if GATE_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'D15B release gate accepted unsafe telemetry INSERT grants'
+fi
+
+# The failure must be for the intended reason, rather
+# than an unrelated SQL syntax or connection error.
+if [[ "$GATE_OUTPUT" != *"D15B_RELEASE_NO_GO: unsafe telemetry application grants"* ]]; then
+  fail 'D15B release gate failed for an unexpected reason'
+fi
+
+echo 'PASS: release gate rejected restored legacy INSERT privilege'
+
+# Undo the simulated privileged regression.
+psql_admin pulse_metrics -q -c '
+  REVOKE INSERT ON public.telemetry_samples
+  FROM pulse_metrics_app;
+'
+
+# After remediation, the release gate must pass again.
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: release gate accepted restored secure permissions'
+
+
+
 echo '========== CHECK DEVELOPMENT DATABASE UNCHANGED =========='
 
 AFTER="$(sudo -u postgres psql -X -v ON_ERROR_STOP=1 -Atq \
@@ -491,5 +685,5 @@ AFTER="$(sudo -u postgres psql -X -v ON_ERROR_STOP=1 -Atq \
 
 echo 'PASS: development database catalog unchanged'
 echo 'D15B MIGRATION REHEARSAL: INSTALLATION AND ACL CHECKS PASSED'
-echo 'NOTE: functional and concurrency smoke tests passed; expiry, scope, forced lock-order races and security approval remain pending'
+echo 'NOTE: functional, credential, concurrency, direct-write and privilege tests passed; final deployment lifecycle review and security approval remain pending'
 echo 'PUBLIC LAUNCH: NO_GO'
