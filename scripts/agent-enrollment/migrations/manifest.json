@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-privileged-agent-enrollment-migration",
+  "phase": "2E3C5D9",
+  "baselineCommit": "2afc6d35019aef5288d19a184ff16144e5b05b31",
+  "steps": [
+    {
+      "version": "0001",
+      "path": "scripts/agent-enrollment/migrations/0001_agent_enrollment.sql",
+      "sha256": "273e571549fc5e12dcd5ce882cd64e801a5008f8492147d49a8afb03743922c8",
+      "schema": "pulse_agent_enrollment",
+      "functionCount": 5
+    }
+  ]
+}
