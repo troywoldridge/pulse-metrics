@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "phase": "2E3C5D12",
+  "parentCommit": "7526b15f085c27d8234b875ae9cc525c5ad6acff",
+  "protectedGitBlobs": {
+    "server.ts": "b60547bda0c88d5f3976cba905ede367b38e9581",
+    "src/main.tsx": "ef12bb11e4796b05c4e57a07af0c1cfeddffedba",
+    "src/agent/run-linux-agent.ts": "6864599b0404aa0f1219344c862c40ec415e92a9",
+    "src/agent/security/credential-vault.ts": "cad8a882397e931f177a1912bb37f03ff994076a",
+    "src/agent/security/machine-identity.ts": "39f875db0939c6e0c353e39f4e680b610d7369db",
+    "src/server/agent-enrollment-routes.ts": "6459ebfaeccc37a915a2dedd57e721a0f3f467aa",
+    "src/server/agent-credential-policy.ts": "f7ff4b52d98c7a25fd8058810529d33e3d3fa113",
+    "scripts/run-all-tests.mjs": "c43adeb18b5732cec588300e9f2c992f40b11a5b",
+    "package.json": "72bd8641c06aacb039cc4b5635a864eb8fd5fc28",
+    "docs/security/AGENT-CREDENTIAL-CUSTODY-D11.md": "e8c4c458f9454d0f375035ad5edfe6df6a25d46f",
+    "scripts/agent-custody/d10-source-lock.json": "9de3e5a1ed0444898e2f22c2f748335f466f1ec5"
+  },
+  "publicEnrollment": "UNMOUNTED",
+  "agentTelemetryTransport": "LOCAL_ONLY",
+  "expectedTestCommand": "node scripts/run-all-tests.mjs"
+}
