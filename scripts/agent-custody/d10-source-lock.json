@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "phase": "2E3C5D11",
+  "parentCommit": "0a128bbd49d302fbb6e4918412d5ba02c895d9d8",
+  "d10FileSha256": {
+    "docs/security/AGENT-ENROLLMENT-INGRESS-D10.md": "c47e1b1933af2cf3adf540c4a18bd16933c173f805538136d1c9308db294b0c7",
+    "scripts/agent-ingress/ingress-http-integration.ts": "f043eb01bd769e04b23dce9ccd5a63ce8b6aadfb3429023d52af91a6762a93f3",
+    "scripts/agent-ingress/launch-gate.mjs": "1db43ae47fe21b509e876ce0559c28af4e5e1c72a2817d8fe5c825129d8e10c8",
+    "scripts/agent-ingress/migration-lock.json": "edaff9c62d451ec3c2945622faa6f06397a08a2addde74abc5026fbd8456fc58",
+    "scripts/agent-ingress/migrations/0002_agent_ingress_quota.sql": "c4213f6dcf95353aad754f9d09f2e08785c42583b74e9b2a8122d96cc0a868d1",
+    "scripts/agent-ingress/quota-integration.mjs": "2b372239753e90030fd7f33caf0f402f98b44ec2579dd5e122ebae49a0de0da9",
+    "scripts/agent-ingress/verify-ingress-candidate.mjs": "2b5910f3e6e347c915e5f4675bcfa29217ef454173ea800b64269fe5e44b3d4e",
+    "scripts/agent-ingress/verify-ingress-candidate.test.mjs": "66605a23120767bf4d3de848254939223fd526e1ee54efa3d0ea8b9769f50ab5",
+    "scripts/test-agent-ingress-rehearsal.sh": "b0021ae0eb256064c4c4f7f5b0cf67c2b44608c36a99b644103c4392b7e5471b",
+    "src/server/security/agent-enrollment-ingress.test.ts": "dbd11a1ce7730009f29399c1acc426ace2517a984b54dd335f0162491031934c",
+    "src/server/security/agent-enrollment-ingress.ts": "e845eaa95fc6d076ce5f2ba4fe9658fda2360893d57775198071102c992b3795",
+    "src/server/security/agent-enrollment-quota.test.ts": "967a6015ba9f42f15d22c87a908a7ccff7e17b135bdc59d6be13ea0924a3c928",
+    "src/server/security/agent-enrollment-quota.ts": "d110b8a201c14cd4b1d8eb82ea482d26eb4db2cc71da20de0af28d554e1f1292"
+  },
+  "protectedGitBlobs": {
+    "server.ts": "b60547bda0c88d5f3976cba905ede367b38e9581",
+    "src/main.tsx": "ef12bb11e4796b05c4e57a07af0c1cfeddffedba",
+    "src/agent/run-linux-agent.ts": "6864599b0404aa0f1219344c862c40ec415e92a9"
+  }
+}
