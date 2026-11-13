@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# Pulse Metrics D15C-3C: FULLY DISPOSABLE PostgreSQL network quota rehearsal.
+# Fresh PostgreSQL cluster on its own Unix socket. TCP disabled.
+# This file does not use DATABASE_URL for database connections.
+# No working development/customer database writes are permitted.
+set -Eeuo pipefail
+umask 077
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+# Never allow libpq connection environment to redirect test commands.
+unset PGHOST PGHOSTADDR PGPORT PGUSER PGDATABASE PGSERVICE PGSERVICEFILE \
+  PGOPTIONS PGPASSWORD PGPASSFILE PGCLUSTER PGSSLMODE PGSSLROOTCERT \
+  PGSSLKEY PGSSLCERT || true
+
+refuse() { printf 'REFUSE_D15C_QUOTA_REHEARSAL: %s\n' "$*" >&2; exit 1; }
+
+for bin in node sudo psql pg_config sha256sum mktemp git timeout python3; do
+  command -v "$bin" >/dev/null 2>&1 || refuse "Missing prerequisite: $bin"
+done
+
+[[ -f .env ]] || refuse 'Expected local development .env'
+
+node --env-file=.env --input-type=module <<'NODE'
+const raw = process.env.DATABASE_URL;
+if (!raw || process.env.NODE_ENV === 'production') {
+  throw new Error('Refusing missing or production development configuration');
+}
+const url = new URL(raw);
+if (!['postgres:', 'postgresql:'].includes(url.protocol) ||
+    !['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase()) ||
+    decodeURIComponent(url.pathname.slice(1)) !== 'pulse_metrics' ||
+    decodeURIComponent(url.username) !== 'pulse_metrics_app') {
+  throw new Error('Only reviewed local development configuration allowed');
+}
+console.log('PASS: local-only development configuration checked (not connected)');
+NODE
+
+echo '========== VERIFY LOCKED MIGRATION SOURCES =========='
+node scripts/migrations/verify-manifest.mjs
+node scripts/agent-enrollment/verify-candidate.mjs
+node scripts/telemetry-ingestion/verify-candidate.mjs
+node scripts/telemetry-quota/verify-candidate.mjs
+
+ORIGINAL_HASH='3a49fc829b985fefe68616dcc525da83138b18e3d199d18d02817d5751f6b513'
+QUOTA_HASH='4cce6ab1a31d4f0f323e6c5ad380b46fc21f1611198b44cf914b74118e29afe8'
+QUOTA_SQL='scripts/telemetry-quota/migrations/0001_telemetry_network_quota.sql'
+[[ "$(sha256sum "$QUOTA_SQL" | cut -d' ' -f1)" == "$QUOTA_HASH" ]] ||
+  refuse 'Quota migration source changed'
+
+PG_BIN="$(pg_config --bindir)"
+for bin in initdb pg_ctl postgres psql createdb; do
+  [[ -x "$PG_BIN/$bin" ]] || refuse "Missing PostgreSQL server binary: $PG_BIN/$bin"
+done
+
+[[ "$(id -un)" =~ ^[a-z_][a-z0-9_-]*$ ]] || refuse 'Unexpected local username'
+[[ "$(id -gn)" =~ ^[a-z_][a-z0-9_-]*$ ]] || refuse 'Unexpected local group'
+
+BASE=''
+DATA=''
+SOCKET=''
+PORT=55432
+PROBE=''
+INSTALL_D15B=''
+INSTALL_QUOTA=''
+
+cleanup() {
+  local code=$? server_alive=0
+  trap - EXIT
+  set +e
+  for temp in "$PROBE" "$INSTALL_D15B" "$INSTALL_QUOTA"; do
+    if [[ "$temp" =~ ^/tmp/pulse-d15c3c-(rollback|d15b|quota)-[A-Za-z0-9]{8}[.]sql$ ]]; then
+      rm -f -- "$temp" || code=1
+    fi
+  done
+
+  if [[ "$BASE" =~ ^/tmp/pulse-replay-[A-Za-z0-9]{10}$ ]] &&
+     sudo -u postgres test -f "$BASE/.pulse-telemetry-quota-marker"; then
+    if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA" status >/dev/null 2>&1; then
+      sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA" -m fast -w stop >/dev/null 2>&1 ||
+      sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA" -m immediate -w stop >/dev/null 2>&1 || true
+    fi
+    if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA" status >/dev/null 2>&1; then
+      server_alive=1
+    fi
+    if [[ "$server_alive" -eq 0 ]]; then
+      sudo -u postgres rm -rf -- "$BASE" || code=1
+      echo 'PASS: disposable quota PostgreSQL cluster removed'
+    else
+      echo "CRITICAL: isolated cluster may still be running at $BASE" >&2
+      code=1
+    fi
+  fi
+  exit "$code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+BASE="$(sudo -u postgres mktemp -d /tmp/pulse-replay-XXXXXXXXXX)"
+[[ "$BASE" =~ ^/tmp/pulse-replay-[A-Za-z0-9]{10}$ ]] ||
+  refuse 'Unexpected temporary data directory path'
+DATA="$BASE/data"
+SOCKET="$BASE/socket"
+sudo -u postgres touch "$BASE/.pulse-telemetry-quota-marker"
+sudo -u postgres mkdir -m 0700 "$DATA"
+sudo -u postgres mkdir -m 0755 "$SOCKET"
+sudo chgrp "$(id -gn)" "$BASE" "$SOCKET"
+sudo -u postgres chmod 0750 "$BASE" "$SOCKET"
+
+echo '========== INITIALIZE ISOLATED POSTGRESQL =========='
+sudo -u postgres "$PG_BIN/initdb" -D "$DATA" \
+  --username=postgres --auth-local=peer --auth-host=reject \
+  --no-instructions >/dev/null
+
+sudo -u postgres tee "$DATA/pg_ident.conf" >/dev/null <<IDENT
+pulse_release $(id -un) pulse_metrics_migrator
+pulse_release $(id -un) pulse_metrics_app
+IDENT
+sudo -u postgres tee "$DATA/pg_hba.conf" >/dev/null <<'HBA'
+local all postgres peer
+local pulse_metrics pulse_metrics_migrator peer map=pulse_release
+local pulse_metrics pulse_metrics_app peer map=pulse_release
+local all all reject
+host all all 0.0.0.0/0 reject
+host all all ::/0 reject
+HBA
+sudo -u postgres tee -a "$DATA/postgresql.conf" >/dev/null <<CONFIG
+listen_addresses = ''
+port = $PORT
+unix_socket_directories = '$SOCKET'
+unix_socket_permissions = 0777
+logging_collector = off
+CONFIG
+
+sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA" -l "$BASE/start.log" -w start >/dev/null
+
+psql_admin() {
+  local db="$1"; shift
+  sudo -u postgres "$PG_BIN/psql" -X -v ON_ERROR_STOP=1 -P pager=off \
+    -h "$SOCKET" -p "$PORT" -U postgres -d "$db" "$@"
+}
+
+IDENTITY="$(psql_admin postgres -Atq -c "
+  SELECT current_setting('data_directory') || '|' || current_user || '|' ||
+  (inet_server_addr() IS NULL)::text || '|' ||
+  (current_setting('listen_addresses') = '')::text || '|' ||
+  current_setting('unix_socket_directories')
+")"
+[[ "$IDENTITY" == "$DATA|postgres|true|true|$SOCKET" ]] ||
+  refuse 'Disposable PostgreSQL target identity mismatch'
+echo 'PASS: exact disposable PostgreSQL data directory; Unix socket only; TCP off'
+
+echo '========== REPLAY HISTORICAL DATABASE FOUNDATION =========='
+psql_admin postgres -q < scripts/replay/bootstrap-roles.sql
+sudo -u postgres "$PG_BIN/createdb" -h "$SOCKET" -p "$PORT" \
+  -U postgres -O postgres pulse_metrics
+psql_admin pulse_metrics -q < scripts/replay/bootstrap-database.sql
+
+PULSE_REPLAY_SOCKET="$SOCKET" PULSE_REPLAY_DATA="$DATA" \
+PULSE_REPLAY_PORT="$PORT" node scripts/replay/migrate-isolated.mjs
+psql_admin pulse_metrics -q < scripts/replay/runtime-grants.sql
+psql_admin pulse_metrics -q < scripts/migrations/ledger-bootstrap.sql
+
+STEPS="$(node scripts/migrations/verify-manifest.mjs --tsv)"
+[[ "$(printf '%s\n' "$STEPS" | wc -l)" -eq 6 ]] ||
+  refuse 'Historical privileged migration count changed'
+while IFS=$'\t' read -r version source digest; do
+  [[ "$version" =~ ^00[1-6]$ ]] || refuse 'Unexpected migration version'
+  [[ "$source" =~ ^scripts/admin/00[1-6]_[a-z_]+[.]sql$ ]] ||
+    refuse 'Unexpected privileged migration source path'
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || refuse 'Invalid pinned source digest'
+  {
+    printf 'BEGIN READ ONLY;\n'
+    printf "SELECT set_config('pulse.replay_step_version','%s',true);\n" "$version"
+    cat scripts/migrations/step-preflight-assert.sql
+    printf 'COMMIT;\n'
+  } | psql_admin pulse_metrics -q >/dev/null
+  psql_admin pulse_metrics -q < "$source"
+  psql_admin pulse_metrics -q -v "version=$version" \
+    -v "source_path=$source" -v "digest=$digest" \
+    < scripts/migrations/ledger-record.sql
+  echo "PASS: protected historical migration $version"
+done <<< "$STEPS"
+psql_admin pulse_metrics -q < scripts/migrations/ledger-audit.sql
+psql_admin pulse_metrics -q < scripts/audit/migration-security-invariants.sql
+psql_admin pulse_metrics -q \
+  < scripts/agent-enrollment/migrations/0001_agent_enrollment.sql
+
+echo '========== INSTALL PINNED D15B INGESTION IN DISPOSABLE CLUSTER =========='
+INSTALL_D15B="$(mktemp /tmp/pulse-d15c3c-d15b-XXXXXXXX.sql)"
+node scripts/telemetry-ingestion/emit-reviewed-sql.mjs > "$INSTALL_D15B"
+[[ "$(sha256sum "$INSTALL_D15B" | cut -d' ' -f1)" == "$ORIGINAL_HASH" ]] ||
+  refuse 'D15B installation bytes changed'
+psql_admin pulse_metrics -q < "$INSTALL_D15B"
+psql_admin pulse_metrics -q < scripts/telemetry-ingestion/release-permission-gate.sql
+rm -f -- "$INSTALL_D15B"; INSTALL_D15B=''
+echo 'PASS: existing locked D15B installation and permission audit'
+
+echo '========== TEST D15C-3B MIGRATION ATOMIC ROLLBACK =========='
+PROBE="$(mktemp /tmp/pulse-d15c3c-rollback-XXXXXXXX.sql)"
+python3 - "$QUOTA_SQL" "$PROBE" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text(encoding='utf8')
+end = '\nCOMMIT;\n'
+if not source.endswith(end) or source.count('\nCOMMIT;') != 1:
+    raise SystemExit('REFUSE: unexpected SQL transaction ending')
+fail = "\nDO $forced$ BEGIN RAISE EXCEPTION 'D15C_QUOTA_EXPECTED_ROLLBACK'; END $forced$;\n"
+Path(sys.argv[2]).write_text(source[:-len(end)] + fail + end, encoding='utf8')
+PY
+if ROLLBACK_OUTPUT="$(psql_admin pulse_metrics -q < "$PROBE" 2>&1)"; then
+  refuse 'Deliberately broken quota migration unexpectedly committed'
+fi
+[[ "$ROLLBACK_OUTPUT" == *'D15C_QUOTA_EXPECTED_ROLLBACK'* ]] ||
+  refuse 'Migration failed for wrong reason during rollback rehearsal'
+psql_admin pulse_metrics -Atq -c "
+  DO \$verify\$ BEGIN
+    IF to_regnamespace('pulse_telemetry_quota') IS NOT NULL OR
+       EXISTS (SELECT 1 FROM pg_roles WHERE rolname='pulse_metrics_telemetry_quota_executor')
+    THEN RAISE EXCEPTION 'Quota schema/role survived atomic rollback'; END IF;
+  END; \$verify\$;
+" >/dev/null
+rm -f -- "$PROBE"; PROBE=''
+echo 'PASS: intentionally aborted migration rolled back every security object'
+
+echo '========== INSTALL PINNED QUOTA MIGRATION IN DISPOSABLE CLUSTER =========='
+node scripts/telemetry-quota/verify-candidate.mjs
+INSTALL_QUOTA="$(mktemp /tmp/pulse-d15c3c-quota-XXXXXXXX.sql)"
+cat -- "$QUOTA_SQL" > "$INSTALL_QUOTA"
+[[ "$(sha256sum "$INSTALL_QUOTA" | cut -d' ' -f1)" == "$QUOTA_HASH" ]] ||
+  refuse 'Captured quota SQL bytes do not match reviewed fingerprint'
+psql_admin pulse_metrics -q < "$INSTALL_QUOTA"
+echo 'PASS: pinned quota candidate installed only in temporary database'
+
+psql_admin pulse_metrics -q <<'SQL'
+DO $verify$
+BEGIN
+  IF (SELECT count(*) FROM pulse_telemetry_quota.schema_migrations) <> 1
+     OR NOT EXISTS (SELECT 1 FROM pulse_telemetry_quota.schema_migrations
+                    WHERE version='0001')
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_class WHERE oid='pulse_telemetry_quota.network_buckets'::regclass
+       AND relrowsecurity AND relforcerowsecurity
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_proc WHERE oid='pulse_telemetry_quota.consume_network_quota(text)'::regprocedure
+       AND prosecdef
+       AND proowner = 'pulse_metrics_telemetry_quota_executor'::regrole
+     )
+     OR has_any_column_privilege('pulse_metrics_app',
+            'pulse_telemetry_quota.network_buckets','SELECT')
+     OR has_any_column_privilege('pulse_metrics_app',
+            'pulse_telemetry_quota.network_buckets','INSERT')
+     OR has_any_column_privilege('pulse_metrics_app',
+            'pulse_telemetry_quota.network_buckets','UPDATE')
+  THEN RAISE EXCEPTION 'Quota protected ledger/RLS/owner/runtime privileges invalid';
+  END IF;
+END;
+$verify$;
+SQL
+
+echo '========== VERIFY DUPLICATE MIGRATION REFUSED =========='
+if REAPPLY="$(psql_admin pulse_metrics -q < "$INSTALL_QUOTA" 2>&1)"; then
+  refuse 'Quota migration unexpectedly reapplied'
+fi
+[[ "$REAPPLY" == *'REFUSE_D15C_QUOTA'* ]] ||
+  refuse 'Duplicate application rejected for unexpected reason'
+echo 'PASS: migration cannot be reinstalled over existing quota security objects'
+
+echo '========== RESTRICTED-RUNTIME FUNCTIONAL AND CONCURRENT TESTS =========='
+PULSE_TELEMETRY_QUOTA_DISPOSABLE_ONLY=YES \
+PULSE_TELEMETRY_QUOTA_SOCKET="$SOCKET" \
+PULSE_TELEMETRY_QUOTA_DATA="$DATA" \
+  timeout 180s node scripts/telemetry-quota/quota-integration.mjs --normal
+
+COUNT="$(psql_admin pulse_metrics -Atq -c \
+  "SELECT count(*) FROM pulse_telemetry_quota.network_buckets")"
+[[ "$COUNT" == '3' ]] || refuse "Unexpected quota test bucket count: $COUNT"
+psql_admin pulse_metrics -q -c "
+  UPDATE pulse_telemetry_quota.network_buckets
+  SET window_end = clock_timestamp() - interval '2 seconds'
+  WHERE bucket_digest = repeat('a',64) AND attempts = 1201
+" >/dev/null
+PULSE_TELEMETRY_QUOTA_DISPOSABLE_ONLY=YES \
+PULSE_TELEMETRY_QUOTA_SOCKET="$SOCKET" \
+PULSE_TELEMETRY_QUOTA_DATA="$DATA" \
+  timeout 30s node scripts/telemetry-quota/quota-integration.mjs --rollover
+RESET="$(psql_admin pulse_metrics -Atq -c \
+  "SELECT attempts FROM pulse_telemetry_quota.network_buckets WHERE bucket_digest=repeat('a',64)")"
+[[ "$RESET" == '1' ]] || refuse 'Expired quota bucket did not reset to 1'
+echo 'PASS: quota expiry/reset behavior verified'
+
+psql_admin pulse_metrics -q < scripts/telemetry-ingestion/release-permission-gate.sql
+rm -f -- "$INSTALL_QUOTA"; INSTALL_QUOTA=''
+echo 'PASS: D15B security unchanged after quota migration'
+echo '========== D15C-3C DISPOSABLE REHEARSAL: ALL CHECKS PASSED =========='
+echo 'PUBLIC LAUNCH: NO_GO | temporary isolated database only'

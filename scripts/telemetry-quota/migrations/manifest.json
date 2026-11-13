@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-privileged-telemetry-network-quota-migration",
+  "phase": "D15C-3B",
+  "database": "pulse_metrics",
+  "steps": [
+    {
+      "version": "0001",
+      "path": "scripts/telemetry-quota/migrations/0001_telemetry_network_quota.sql",
+      "sha256": "4cce6ab1a31d4f0f323e6c5ad380b46fc21f1611198b44cf914b74118e29afe8",
+      "schema": "pulse_telemetry_quota"
+    }
+  ]
+}
