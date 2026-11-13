@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-privileged-telemetry-ingestion-migration",
+  "phase": "D15B",
+  "database": "pulse_metrics",
+  "steps": [
+    {
+      "version": "0001",
+      "path": "scripts/telemetry-ingestion/migrations/0001_telemetry_ingestion.sql",
+      "sha256": "3a49fc829b985fefe68616dcc525da83138b18e3d199d18d02817d5751f6b513",
+      "schema": "pulse_telemetry_ingestion"
+    }
+  ]
+}

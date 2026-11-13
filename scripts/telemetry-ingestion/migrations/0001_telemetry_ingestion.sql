@@ -34,6 +34,24 @@ $preflight$;
 CREATE SCHEMA pulse_telemetry_ingestion;
 REVOKE ALL ON SCHEMA pulse_telemetry_ingestion FROM PUBLIC;
 
+-- Private migration receipt, created atomically with D15B.
+-- This is independent of Drizzle and the historical six-step ledger.
+CREATE TABLE pulse_telemetry_ingestion.schema_migrations (
+  version varchar(16) PRIMARY KEY,
+  installed_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  description varchar(160) NOT NULL
+);
+
+ALTER TABLE pulse_telemetry_ingestion.schema_migrations
+  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pulse_telemetry_ingestion.schema_migrations
+  FORCE ROW LEVEL SECURITY;
+
+REVOKE ALL ON pulse_telemetry_ingestion.schema_migrations
+  FROM PUBLIC, pulse_metrics_app;
+
+-- Never grant ordinary runtime access to migration receipts.
+
 CREATE ROLE pulse_metrics_telemetry_executor
   NOLOGIN NOINHERIT NOSUPERUSER
   NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS;
@@ -503,5 +521,13 @@ GRANT EXECUTE ON FUNCTION pulse_telemetry_ingestion.ingest_submission(
   text,uuid,text,timestamptz,integer,
   real,real,real,bigint,bigint,jsonb
 ) TO pulse_metrics_app;
+
+-- Record installation in the SAME transaction as the security objects.
+INSERT INTO pulse_telemetry_ingestion.schema_migrations
+  (version, description)
+VALUES (
+  '0001',
+  'Credential-authenticated telemetry ingestion, revision 1'
+);
 
 COMMIT;

@@ -40,6 +40,56 @@ BEGIN
       'D15B_RELEASE_NO_GO: ingestion function missing';
   END IF;
 
+  -- Require exactly one protected atomic installation receipt.
+  IF to_regclass(
+       'pulse_telemetry_ingestion.schema_migrations'
+     ) IS NULL THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: installation receipt missing';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_class
+    WHERE oid =
+      'pulse_telemetry_ingestion.schema_migrations'::regclass
+      AND relowner = 'postgres'::regrole
+      AND relrowsecurity
+      AND relforcerowsecurity
+  ) THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: installation receipt unprotected';
+  END IF;
+
+  IF has_table_privilege(
+       'pulse_metrics_app',
+       'pulse_telemetry_ingestion.schema_migrations',
+       'SELECT'
+     )
+     OR has_table_privilege(
+       'pulse_metrics_app',
+       'pulse_telemetry_ingestion.schema_migrations',
+       'INSERT'
+     ) THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: runtime can access installation receipts';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pulse_telemetry_ingestion.schema_migrations
+  ) <> 1
+     OR NOT EXISTS (
+       SELECT 1
+       FROM pulse_telemetry_ingestion.schema_migrations
+       WHERE version = '0001'
+         AND description =
+           'Credential-authenticated telemetry ingestion, revision 1'
+     ) THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: installation receipt mismatch';
+  END IF;
+
   -- Direct telemetry writes must never be available
   -- to the ordinary application role.
   IF has_any_column_privilege(

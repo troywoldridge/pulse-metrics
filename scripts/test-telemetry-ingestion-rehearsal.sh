@@ -57,13 +57,9 @@ CANDIDATE='scripts/telemetry-ingestion/migrations/0001_telemetry_ingestion.sql'
 [[ -s "$CANDIDATE" ]] ||
   fail 'D15B candidate is missing or empty'
 
-# This is the exact currently reviewed candidate, not an approval pin.
-EXPECTED='5385963fc07671968d928210bd7b80fb14ff104947bdaa6d1c491f5466663157'
-
-ACTUAL="$(sha256sum "$CANDIDATE" | cut -d' ' -f1)"
-
-[[ "$ACTUAL" == "$EXPECTED" ]] ||
-  fail 'D15B SQL changed since the last source review'
+# Verify the manifest and source against the independent D15B lock.
+# This does not approve or install the candidate.
+node scripts/telemetry-ingestion/verify-candidate.mjs
 
 echo 'PASS: D15B candidate matches reviewed input'
 
@@ -287,6 +283,103 @@ psql_admin pulse_metrics -q \
 echo 'PASS: protected agent-enrollment migration installed'
 
 echo '========== ATTEMPT D15B CANDIDATE INSTALLATION =========='
+
+echo '========== D15B FAILED INSTALLATION ATOMICITY TEST =========='
+
+# The disposable PostgreSQL cluster must already be initialized.
+# Use a temporary copy; never change the reviewed migration.
+# Create the SQL probe outside the restricted PostgreSQL directory.
+# Only the disposable PostgreSQL cluster will execute this test copy.
+ROLLBACK_PROBE="$(mktemp /tmp/pulse-d15b-rollback-XXXXXXXX.sql)"
+chmod 600 "$ROLLBACK_PROBE"
+
+python3 - "$CANDIDATE" "$ROLLBACK_PROBE" <<'PYROLLBACK'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+destination = Path(sys.argv[2])
+
+ending = "\nCOMMIT;\n"
+
+if not source.endswith(ending):
+    raise SystemExit("REFUSE: unexpected migration ending")
+
+if source.count("\nCOMMIT;") != 1:
+    raise SystemExit("REFUSE: ambiguous migration COMMIT")
+
+failure = (
+    "\nDO $d15b_forced_failure$\n"
+    "BEGIN\n"
+    "  RAISE EXCEPTION 'D15B_EXPECTED_ATOMIC_ROLLBACK'\n"
+    "    USING ERRCODE = 'P0001';\n"
+    "END;\n"
+    "$d15b_forced_failure$;\n"
+)
+
+destination.write_text(
+    source[:-len(ending)] + failure + ending,
+    encoding="utf-8",
+)
+PYROLLBACK
+
+if ROLLBACK_OUTPUT="$(psql_admin pulse_metrics -q \
+  < "$ROLLBACK_PROBE" 2>&1)"; then
+  fail 'D15B deliberately broken migration unexpectedly succeeded'
+fi
+
+if [[ "$ROLLBACK_OUTPUT" != *"D15B_EXPECTED_ATOMIC_ROLLBACK"* ]]; then
+  printf '%s\n' "$ROLLBACK_OUTPUT"
+  fail 'D15B rollback failed for an unexpected reason'
+fi
+
+echo 'PASS: forced installation failure detected'
+
+# Verify rollback using a fresh PostgreSQL session.
+psql_admin pulse_metrics -q <<'SQLROLLBACK'
+BEGIN READ ONLY;
+
+DO $verify$
+BEGIN
+  IF current_database() <> 'pulse_metrics'
+     OR current_user <> 'postgres'
+     OR inet_server_addr() IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'Unsafe rollback verification environment';
+  END IF;
+
+  IF to_regnamespace('pulse_telemetry_ingestion') IS NOT NULL
+     OR EXISTS (
+       SELECT 1 FROM pg_roles
+       WHERE rolname = 'pulse_metrics_telemetry_executor'
+     )
+  THEN
+    RAISE EXCEPTION
+      'D15B_ROLLBACK_FAILURE: security objects survived';
+  END IF;
+
+  IF NOT has_any_column_privilege(
+    'pulse_metrics_app',
+    'public.telemetry_samples',
+    'INSERT'
+  ) THEN
+    RAISE EXCEPTION
+      'D15B_ROLLBACK_FAILURE: original grants were altered';
+  END IF;
+
+  RAISE NOTICE
+    'PASS: failed migration left no D15B schema, receipt, or executor role';
+END;
+$verify$;
+
+COMMIT;
+SQLROLLBACK
+
+rm -f -- "$ROLLBACK_PROBE"
+
+echo 'PASS: D15B failed installation rolled back atomically'
+
+echo '========== INSTALL ORIGINAL D15B CANDIDATE =========='
 
 psql_admin pulse_metrics -q < "$CANDIDATE"
 
@@ -671,6 +764,70 @@ psql_admin pulse_metrics -q \
   < scripts/telemetry-ingestion/release-permission-gate.sql
 
 echo 'PASS: release gate accepted restored secure permissions'
+
+
+echo '========== D15B ALTERED RECEIPT REJECTION TEST =========='
+
+psql_admin pulse_metrics -q -c "
+  UPDATE pulse_telemetry_ingestion.schema_migrations
+  SET description = 'INTENTIONALLY ALTERED TEST RECEIPT'
+  WHERE version = '0001';
+"
+
+if RECEIPT_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'Release gate accepted an altered installation receipt'
+fi
+
+if [[ "$RECEIPT_OUTPUT" != *"D15B_RELEASE_NO_GO: installation receipt mismatch"* ]]; then
+  printf '%s\n' "$RECEIPT_OUTPUT"
+  fail 'Altered receipt was rejected for an unexpected reason'
+fi
+
+echo 'PASS: altered installation receipt rejected'
+
+psql_admin pulse_metrics -q -c "
+  UPDATE pulse_telemetry_ingestion.schema_migrations
+  SET description =
+    'Credential-authenticated telemetry ingestion, revision 1'
+  WHERE version = '0001';
+"
+
+echo '========== D15B MISSING RECEIPT REJECTION TEST =========='
+
+psql_admin pulse_metrics -q -c "
+  DELETE FROM pulse_telemetry_ingestion.schema_migrations
+  WHERE version = '0001';
+"
+
+if RECEIPT_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'Release gate accepted a missing installation receipt'
+fi
+
+if [[ "$RECEIPT_OUTPUT" != *"D15B_RELEASE_NO_GO: installation receipt mismatch"* ]]; then
+  printf '%s\n' "$RECEIPT_OUTPUT"
+  fail 'Missing receipt was rejected for an unexpected reason'
+fi
+
+echo 'PASS: missing installation receipt rejected'
+
+psql_admin pulse_metrics -q -c "
+  INSERT INTO pulse_telemetry_ingestion.schema_migrations
+    (version, description)
+  VALUES (
+    '0001',
+    'Credential-authenticated telemetry ingestion, revision 1'
+  );
+"
+
+echo '========== D15B RECEIPT RESTORATION TEST =========='
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: restored installation receipt accepted'
+
 
 
 
