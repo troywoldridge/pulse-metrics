@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-credential-rejection-outcome-migration",
+  "phase": "D15C-4E",
+  "database": "pulse_metrics",
+  "steps": [
+    {
+      "version": "0002",
+      "path": "scripts/telemetry-auth-outcome/migrations/0002_machine_credential_rejection.sql",
+      "schema": "pulse_telemetry_agent_quota",
+      "sha256": "3061f797a7d1fa0dfb335130252c4d89a3d1ee50d263854a22caa2a6c4d8c771"
+    }
+  ]
+}

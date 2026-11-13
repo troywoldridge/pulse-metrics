@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-privileged-authenticated-agent-quota-migration",
+  "phase": "D15C-4B",
+  "database": "pulse_metrics",
+  "steps": [
+    {
+      "version": "0001",
+      "path": "scripts/telemetry-agent-quota/migrations/0001_telemetry_agent_quota.sql",
+      "sha256": "a90ec4b3c0b83c53b147d0160ab589cf673bfb032898b46075ce9c0b28f5f012",
+      "schema": "pulse_telemetry_agent_quota"
+    }
+  ]
+}

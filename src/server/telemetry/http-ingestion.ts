@@ -1,13 +1,14 @@
 /**
- * Pulse Metrics — D15C isolated HTTP ingestion candidate.
+ * Pulse Metrics — D15C-4C isolated HTTP ingestion candidate.
  *
  * UNMOUNTED. NOT APPROVED FOR PRODUCTION.
  *
- * Admission is for isolated tests only, not proof of TLS,
- * rate limiting, or authenticated network ingress.
+ * This full-file rewrite adds a sanitized 429 response for an authenticated
+ * agent quota denial returned by the protected PostgreSQL ingestion gateway.
+ * Existing private test-only admission remains mandatory. This is NOT proof
+ * of live TLS, reverse proxy admission, or a deployed quota stack.
  *
- * Organization and agent identity must be derived by the
- * protected PostgreSQL function from the machine credential.
+ * Tenant and agent identity must come from the protected database function.
  */
 
 import type {
@@ -18,6 +19,7 @@ import type {
 
 import {
   InvalidMachineCredentialError,
+  TelemetryAgentRateLimited,
   TelemetryPersistenceUnavailable,
   TelemetrySubmissionConflict,
   type TelemetryPersistenceOutcome,
@@ -135,11 +137,8 @@ function parseSubmission(body: unknown): {
 }
 
 /**
- * Candidate handler is deliberately fail-closed unless an
- * explicitly enabled isolated-test admission handler precedes it.
- *
- * This admission handler MUST NOT be used as a production
- * network security boundary.
+ * The candidate MUST be preceded by a separate isolated-test admission.
+ * This WeakSet is not a production transport/security boundary.
  */
 export function createIsolatedTelemetryHttpCandidate(
   options: CandidateOptions,
@@ -276,9 +275,7 @@ export function createIsolatedTelemetryHttpCandidate(
         status: outcome,
       });
     } catch (error) {
-      if (
-        error instanceof InvalidMachineCredentialError
-      ) {
+      if (error instanceof InvalidMachineCredentialError) {
         res.status(401).json({
           error: 'invalid_machine_credential',
         });
@@ -300,6 +297,22 @@ export function createIsolatedTelemetryHttpCandidate(
           error: 'telemetry_submission_conflict',
         });
         return;
+      }
+
+      if (error instanceof TelemetryAgentRateLimited) {
+        const seconds = error.retryAfterSeconds;
+
+        if (
+          Number.isSafeInteger(seconds) &&
+          seconds >= 1 &&
+          seconds <= 900
+        ) {
+          res.setHeader('Retry-After', String(seconds));
+          res.status(429).json({
+            error: 'telemetry_rate_limited',
+          });
+          return;
+        }
       }
 
       res.status(503).json({

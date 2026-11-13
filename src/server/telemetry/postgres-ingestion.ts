@@ -1,15 +1,15 @@
 /**
- * Pulse Metrics — D15B PostgreSQL ingestion gateway.
+ * Pulse Metrics — D15C-4C PostgreSQL ingestion gateway candidate.
  *
- * UNMOUNTED FOUNDATION.
+ * UNMOUNTED. NOT APPROVED FOR PRODUCTION.
  *
- * Calls a future, separately reviewed, atomic PostgreSQL function.
- * No database connection is opened on import.
- * No HTTP handler, route, credential vault, or network transport.
+ * This is a complete rewrite of the gateway to interpret the separately
+ * reviewed D15C-4B PostgreSQL quota decision. It does not open a database
+ * connection, mount routes, or relax the database authorization boundary.
  *
- * The database function MUST verify the machine credential, its
- * telemetry:write scope, expiry and revocation while protecting
- * the subsequent insert against concurrent credential revocation.
+ * The SQL function itself must still authenticate machine credentials,
+ * lock the agent before the credential, validate telemetry, and enforce
+ * quota accounting in one standalone autocommit statement.
  *
  * Organization and agent IDs are NEVER supplied by the caller.
  */
@@ -23,6 +23,10 @@ import {
 import {
   prepareTelemetrySubmission,
 } from './submission-identity.js';
+
+import {
+  parseIngestionDecisionV2,
+} from './ingestion-outcome-v2.js';
 
 export type TelemetrySqlExecutor =
   (statement: SQL) => Promise<unknown>;
@@ -51,8 +55,19 @@ export class TelemetrySubmissionConflict extends Error {
   }
 }
 
+export class TelemetryAgentRateLimited extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super('Telemetry agent quota exceeded');
+    this.name = 'TelemetryAgentRateLimited';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 function parseOutcome(result: unknown):
-  'inserted' | 'duplicate' | 'conflict' {
+  | { outcome: 'inserted' | 'duplicate' | 'conflict' | 'credential_unavailable'; retryAfterSeconds: 0 }
+  | { outcome: 'rate_limited'; retryAfterSeconds: number } {
   if (
     !result ||
     typeof result !== 'object' ||
@@ -69,31 +84,28 @@ function parseOutcome(result: unknown):
     !row ||
     typeof row !== 'object' ||
     Array.isArray(row) ||
-    !('outcome' in row)
+    Object.keys(row).length !== 1 ||
+    !Object.prototype.hasOwnProperty.call(row, 'outcome')
   ) {
     throw new TelemetryPersistenceUnavailable();
   }
 
-  const outcome = row.outcome;
-
-  if (
-    outcome !== 'inserted' &&
-    outcome !== 'duplicate' &&
-    outcome !== 'conflict'
-  ) {
+  try {
+    return parseIngestionDecisionV2(
+      (row as { outcome: unknown }).outcome,
+    );
+  } catch {
+    // Unexpected database output is never returned to the agent.
     throw new TelemetryPersistenceUnavailable();
   }
-
-  return outcome;
 }
 
 /**
- * Explicit dependency injection preserves existing database
- * ownership and permissions. No implicit database connection.
+ * Explicit dependency injection prevents implicit DB access.
  *
- * The future SQL function must implement ALL authorization and
- * persistence atomically. This TypeScript gateway cannot replace
- * those database security requirements.
+ * IMPORTANT: The executor must issue one standalone PostgreSQL statement,
+ * not an operation inside a caller-managed transaction that might later
+ * roll back the durable quota denial.
  */
 export function createPostgresTelemetryIngestionGateway(
   execute: TelemetrySqlExecutor,
@@ -113,7 +125,7 @@ export function createPostgresTelemetryIngestionGateway(
         throw new InvalidMachineCredentialError();
       }
 
-      // Validate BEFORE accessing PostgreSQL.
+      // Reject malformed telemetry before touching PostgreSQL.
       const prepared = prepareTelemetrySubmission(
         submissionId,
         envelope,
@@ -122,9 +134,6 @@ export function createPostgresTelemetryIngestionGateway(
 
       const credentialHash = hashAgentSecret(machineSecret);
       const telemetry = prepared.telemetry;
-
-      // JSON parameters are explicitly cast to jsonb.
-      // All values are parameterized; no SQL string concatenation.
       const metricsJson = JSON.stringify(telemetry.metrics);
 
       let result: unknown;
@@ -146,17 +155,29 @@ export function createPostgresTelemetryIngestionGateway(
           ) AS outcome
         `);
       } catch {
-        // Never return driver errors, connection details, SQL or secrets.
+        // Never leak driver errors, SQL, secrets, or connection details.
         throw new TelemetryPersistenceUnavailable();
       }
 
-      const outcome = parseOutcome(result);
+      const decision = parseOutcome(result);
 
-      if (outcome === 'conflict') {
+      if (decision.outcome === 'credential_unavailable') {
+        // Only an explicit protected-function result means HTTP 401.
+        // SQLSTATE 42501, outages and driver errors still mean 503.
+        throw new InvalidMachineCredentialError();
+      }
+
+      if (decision.outcome === 'conflict') {
         throw new TelemetrySubmissionConflict();
       }
 
-      return outcome;
+      if (decision.outcome === 'rate_limited') {
+        throw new TelemetryAgentRateLimited(
+          decision.retryAfterSeconds,
+        );
+      }
+
+      return decision.outcome;
     },
   };
 }
