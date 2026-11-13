@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "kind": "review-only-privileged-telemetry-quota-maintenance-migration",
+  "phase": "D15C-5A",
+  "database": "pulse_metrics",
+  "steps": [
+    {
+      "version": "0001",
+      "path": "scripts/telemetry-maintenance/migrations/0001_telemetry_quota_retention.sql",
+      "sha256": "5c8626cea57c4238698882b7260112cea1adfe017866af39ba14a2ffb39ddc5e",
+      "schema": "pulse_telemetry_maintenance"
+    }
+  ]
+}
