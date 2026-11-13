@@ -107,6 +107,8 @@ BASE=''
 DATA=''
 SOCKET=''
 PORT=55432
+ROLLBACK_PROBE=''
+INSTALL_SQL=''
 
 cleanup() {
   local code=$?
@@ -114,7 +116,14 @@ cleanup() {
   trap - EXIT
   set +e
 
-  if [[ -n "$BASE" &&
+  # Remove only our narrowly named temporary SQL files.
+  for temporary in "$ROLLBACK_PROBE" "$INSTALL_SQL"; do
+    if [[ "$temporary" =~ ^/tmp/pulse-d15b-(rollback|install)-[A-Za-z0-9]{8}[.]sql$ ]]; then
+      rm -f -- "$temporary" || code=1
+    fi
+  done
+
+  if [[ -n "$BASE"  &&
         "$BASE" =~ ^/tmp/pulse-replay-[A-Za-z0-9]{10}$ ]] &&
      sudo -u postgres test -f "$BASE/.pulse-telemetry-marker"; then
 
@@ -376,14 +385,159 @@ COMMIT;
 SQLROLLBACK
 
 rm -f -- "$ROLLBACK_PROBE"
+ROLLBACK_PROBE=''
 
 echo 'PASS: D15B failed installation rolled back atomically'
 
 echo '========== INSTALL ORIGINAL D15B CANDIDATE =========='
 
-psql_admin pulse_metrics -q < "$CANDIDATE"
+echo '========== D15B CONTROLLED INSTALLATION =========='
 
+# The PostgreSQL connection wrapper was already bound to the
+# marker-verified disposable cluster earlier in this rehearsal.
+# Never accept a database URL or a caller-selected target here.
+
+INSTALL_IDENTITY="$(psql_admin pulse_metrics -Atq -c "
+  SELECT current_database() || '|' ||
+         current_user || '|' ||
+         (inet_server_addr() IS NULL)::text || '|' ||
+         (current_setting('data_directory') = '$DATA')::text ||
+         '|' ||
+         (current_setting('listen_addresses') = '')::text
+")"
+
+[[ "$INSTALL_IDENTITY" == 'pulse_metrics|postgres|true|true|true' ]] ||
+  fail 'D15B controlled installer refused unexpected target'
+
+echo 'PASS: controlled installer target verified'
+
+# Reverify the manifest before installation.
+node scripts/telemetry-ingestion/verify-candidate.mjs
+
+# Verify and capture exact SQL bytes before opening the psql input.
+# This avoids emitting partial SQL if source verification fails.
+INSTALL_SQL="$(mktemp /tmp/pulse-d15b-install-XXXXXXXX.sql)"
+chmod 600 "$INSTALL_SQL"
+
+node scripts/telemetry-ingestion/emit-reviewed-sql.mjs > "$INSTALL_SQL"
+
+INSTALL_HASH="$(sha256sum "$INSTALL_SQL" | cut -d' ' -f1)"
+EXPECTED_INSTALL_HASH='3a49fc829b985fefe68616dcc525da83138b18e3d199d18d02817d5751f6b513'
+
+[[ "$INSTALL_HASH" == "$EXPECTED_INSTALL_HASH" ]] ||
+  fail 'D15B emitted installation artifact changed'
+
+echo 'PASS: exact installation artifact fingerprint verified'
+
+# Execute only the captured, verified bytes.
+psql_admin pulse_metrics -q < "$INSTALL_SQL"
+
+rm -f -- "$INSTALL_SQL"
+INSTALL_SQL=''
+
+echo 'PASS: verified D15B SQL installed in disposable PostgreSQL'
+
+# A failed audit cannot roll back a committed migration.
+# Never report deployment success after such a failure.
+post_commit_gate() {
+  local output
+
+  if output="$(psql_admin pulse_metrics -q \
+    < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+    printf '%s\n' "$output"
+    echo 'PASS: mandatory post-installation security audit'
+    return 0
+  fi
+
+  echo 'D15B_COMMITTED_RELEASE_BLOCKED: post-commit audit failed' >&2
+  echo 'D15B_COMMITTED_RELEASE_BLOCKED: database changes may remain' >&2
+  return 1
+}
+
+post_commit_gate
 echo 'PASS: D15B migration installed in disposable PostgreSQL'
+
+echo '========== D15B DUPLICATE INSTALLATION REJECTION TEST =========='
+
+# A second installation must fail before altering installed objects.
+# Source remains independently pinned; target remains disposable.
+if REAPPLY_OUTPUT="$(
+  node scripts/telemetry-ingestion/emit-reviewed-sql.mjs |
+    psql_admin pulse_metrics -q 2>&1
+)"; then
+  fail 'D15B duplicate installation unexpectedly succeeded'
+fi
+
+if [[ "$REAPPLY_OUTPUT" != *"REFUSE_TELEMETRY_MIGRATION: unexpected database baseline"* ]]; then
+  printf '%s\n' "$REAPPLY_OUTPUT"
+  fail 'D15B duplicate installation failed for an unexpected reason'
+fi
+
+echo 'PASS: D15B duplicate installation refused'
+
+# Ensure the failed second attempt did not weaken the first install.
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: original installation remains secure after reapplication refusal'
+
+
+echo '========== D15B POST-COMMIT AUDIT FAILURE TEST =========='
+
+# The migration is already committed in this disposable cluster.
+# Simulate a later unsafe privilege change.
+psql_admin pulse_metrics -q -c '
+  GRANT INSERT ON public.telemetry_samples
+  TO pulse_metrics_app;
+'
+
+# The post-commit gate must return failure and never report success.
+if AUDIT_FAILURE_OUTPUT="$(post_commit_gate 2>&1)"; then
+  fail 'Post-commit security regression was accepted'
+fi
+
+if [[ "$AUDIT_FAILURE_OUTPUT" != *"D15B_COMMITTED_RELEASE_BLOCKED"* ]]; then
+  printf '%s\n' "$AUDIT_FAILURE_OUTPUT"
+  fail 'Post-commit audit failed without committed-state warning'
+fi
+
+if [[ "$AUDIT_FAILURE_OUTPUT" == *"PASS: mandatory post-installation security audit"* ]]; then
+  fail 'Post-commit audit incorrectly reported success'
+fi
+
+echo 'PASS: committed installation reported release-blocking audit failure'
+echo 'PASS: failed audit did not report installation approval'
+
+# Confirm the prior installation and receipt remain committed.
+psql_admin pulse_metrics -Atq -c "
+  SELECT CASE
+    WHEN to_regclass(
+      'pulse_telemetry_ingestion.schema_migrations'
+    ) IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM pulse_telemetry_ingestion.schema_migrations
+      WHERE version = '0001'
+    )
+    THEN 'COMMITTED'
+    ELSE 'MISSING'
+  END;
+" | grep -qx 'COMMITTED' ||
+  fail 'Committed installation receipt missing after audit failure'
+
+echo 'PASS: committed installation receipt still exists'
+
+# Restore secure permissions in the disposable cluster.
+psql_admin pulse_metrics -q -c '
+  REVOKE INSERT ON public.telemetry_samples
+  FROM pulse_metrics_app;
+'
+
+post_commit_gate
+
+echo 'PASS: post-commit release gate recovered after remediation'
+
+
 
 echo '========== CHECK D15B DATABASE PERMISSIONS =========='
 

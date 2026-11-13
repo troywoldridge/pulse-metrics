@@ -1,8 +1,9 @@
 # Pulse Metrics — D15B Release Readiness
 
-**Status:** Candidate — security approval pending
+**Status:** Controlled disposable rehearsal passed; security approval pending
 **Public deployment:** NO_GO
 **Migration:** scripts/telemetry-ingestion/migrations/0001_telemetry_ingestion.sql
+**Last reviewed:** 2026-11-12
 
 ## 1. Purpose
 
@@ -10,113 +11,174 @@ D15B establishes PostgreSQL-backed, credential-authenticated
 telemetry ingestion for a commercial multi-tenant monitoring service.
 
 The ordinary application role must not insert telemetry directly.
+Machine and organization ownership must be derived from a verified
+credential inside the protected PostgreSQL ingestion function.
 
-Machine ownership is derived from a verified credential inside
-the privileged PostgreSQL ingestion function.
+## 2. Reviewed migration identity
 
-## 2. Verified test coverage
+Version: 0001
 
-The disposable PostgreSQL rehearsal has demonstrated:
+SHA-256:
+3a49fc829b985fefe68616dcc525da83138b18e3d199d18d02817d5751f6b513
 
-- Original migration replay and historical-source integrity.
-- Valid enrollment and authenticated telemetry insertion.
-- Separate telemetry ownership for two synthetic organizations.
-- Idempotent submission retries and conflict detection.
-- Concurrent identical and conflicting submissions.
-- Credential revocation and expiration enforcement.
-- Required telemetry:write permission enforcement.
-- Rejection of unauthorized application database operations.
-- Controlled revocation and rotation lock ordering.
-- Rejection of direct telemetry INSERT with valid tenant context.
-- Detection of a simulated legacy permission regression.
-- Release-gate acceptance of secure database permissions.
-- Release-gate rejection of restored direct INSERT privileges.
-- Preservation of the development database catalog.
-- Disposal of the isolated PostgreSQL test cluster.
+Manifest:
+scripts/telemetry-ingestion/migrations/manifest.json
 
-These results apply only to the tested implementation and conditions.
+Verifier:
+scripts/telemetry-ingestion/verify-candidate.mjs
 
-## 3. Deployment restrictions
+Artifact emitter:
+scripts/telemetry-ingestion/emit-reviewed-sql.mjs
 
-The current SQL migration is a reviewed candidate, not an
-approved production migration.
+The manifest and SQL are checked against an independently pinned
+fingerprint. The emitter validates the bytes it outputs.
 
-It requires PostgreSQL administrator privileges and is not
-installed through the ordinary Drizzle migration command.
+Source verification does not constitute deployment approval.
 
-Do not run this SQL against development, staging, or production
-until an explicitly reviewed installation process is available.
+## 3. Verified database behavior
 
-Do not modify historical migration source files.
+The disposable PostgreSQL rehearsal has passed:
 
-Do not apply the original runtime-grants.sql bootstrap script
-after D15B; it can restore an unauthorized telemetry INSERT grant.
+- Historical migration replay and source integrity verification.
+- Correct database ownership, restricted roles, and RLS checks.
+- Authenticated enrollment and telemetry persistence.
+- Isolation between two synthetic customer organizations.
+- Idempotent submissions and conflicting retry rejection.
+- Concurrent submission and revocation tests.
+- Expired, revoked, and insufficient-scope credential rejection.
+- Unauthorized runtime database operation rejection.
+- Direct telemetry INSERT bypass rejection.
+- Legacy unsafe permission regression detection.
+- Protected installation receipt verification.
+- Missing and altered receipt rejection.
+- Atomic rollback after an intentionally failed migration.
+- Duplicate installation refusal.
+- Preservation of security controls after rejected reapplication.
 
-## 4. Requirements before approving installation
+These tests demonstrate behavior under the tested conditions only.
 
-- Independently verify the intended target database.
-- Confirm migration prerequisites and installation ordering.
-- Approve the privileged migration executor and role strategy.
-- Establish immutable source fingerprint verification.
-- Establish an append-only privileged migration receipt.
-- Prevent accidental reapplication of the migration.
-- Confirm a successful backup and tested recovery procedure.
-- Document expected downtime and transaction-lock implications.
-- Run required tests on an isolated representative database.
-- Make the read-only D15B release permission gate mandatory.
-- Block release on any permission-audit failure.
-- Verify application compatibility after revoking direct INSERT.
-- Obtain explicit migration security and deployment approval.
+## 4. Controlled installation rehearsal
 
-## 5. Mandatory post-migration permission audit
+The test-only installation controller uses a disposable PostgreSQL
+cluster with the following controls:
 
-Audit source:
+- Explicitly verified PostgreSQL data directory.
+- Unix socket connection with TCP disabled.
+- Restricted PostgreSQL administrative connection wrapper.
+- Fixed expected database and database administrator identity.
+- Independent migration source fingerprint verification.
+- Verified SQL artifact capture before installation.
+- Atomic migration transaction.
+- Mandatory post-installation release permission audit.
+- Release-blocking failure handling.
 
+The controller does not accept arbitrary deployment targets.
+
+It is NOT approved for development, staging, or production use.
+
+## 5. Failure and recovery verification
+
+### Failure before COMMIT
+
+An intentionally broken migration was executed against an isolated
+database. PostgreSQL rolled back its uncommitted changes.
+
+The test verified that no D15B schema, executor role, or
+installation receipt survived.
+
+### Duplicate installation
+
+A second installation attempt was rejected.
+
+The original installation remained committed and its security
+permission audit passed.
+
+### Failure after COMMIT
+
+A deliberate unsafe permission was introduced after installation.
+
+The mandatory release gate rejected the database.
+
+The test verified:
+
+- A nonzero audit result.
+- An explicit committed-but-release-blocked warning.
+- No false audit-success result.
+- Preservation of the committed migration receipt.
+- Successful audit after synthetic permission remediation.
+
+A post-commit audit failure does not automatically roll back
+committed PostgreSQL changes.
+
+## 6. Mandatory release permission gate
+
+Source:
 scripts/telemetry-ingestion/release-permission-gate.sql
 
-The deployment controller must execute this audit using an
-authorized read-only audit connection after installation,
-upgrade, restore, or privilege modification.
+The audit must be executed after installation, upgrade, restore,
+or privileged permission modification.
 
-A nonzero result must block release.
+Any audit failure must block deployment or continued release
+activation until reviewed and remediated.
 
-Successful execution does not prove that all HTTP, application,
-network, or operational security requirements are satisfied.
+The historical runtime-grants.sql script must not be reapplied
+after D15B because it can restore unsafe direct INSERT privileges.
 
-## 6. Recovery strategy
+## 7. Remaining release requirements
 
-No automatic reverse migration is approved.
+Before any deployment approval:
 
-Do not restore the legacy direct telemetry INSERT grant
-as an emergency workaround.
+- Review the complete privileged installation lifecycle.
+- Require an independently authorized deployment artifact.
+- Prove target identity and execution-context validation.
+- Review inherited roles and column-level grant exposure.
+- Validate cleanup after interrupted or failed installations.
+- Establish backup and tested restoration procedures.
+- Assess migration locking, downtime, and operational effects.
+- Test representative application compatibility.
+- Define audit logging and operator approval procedures.
+- Obtain explicit security and deployment approval.
 
-If deployment fails:
+A successful disposable rehearsal is not production certification.
 
-1. Stop the release process.
-2. Keep telemetry ingestion unavailable to customers.
-3. Capture sanitized failure evidence.
-4. Determine whether the installation transaction committed.
+## 8. Recovery restrictions
+
+No automatic reverse migration has been approved.
+
+Do not restore legacy telemetry INSERT grants as a workaround.
+
+For an installation or post-installation failure:
+
+1. Stop release activation.
+2. Record sanitized failure evidence.
+3. Determine whether the transaction committed.
+4. Inspect database permissions and migration receipts.
 5. Follow an approved restore or forward-repair procedure.
-6. Revalidate the restored database and all security grants.
-7. Run the mandatory release gate.
-8. Resume only after explicit operational approval.
+6. Rerun the mandatory release permission gate.
+7. Resume only after explicit operational approval.
 
-A backup alone is not proof of recoverability.
+A backup alone is not proof that recovery works.
 
-## 7. Remaining work beyond D15B
+## 9. Remaining product development
 
-- Authenticated HTTPS telemetry endpoint.
-- Request authentication and ingress rate limiting.
-- Safe handling of machine credentials at the API boundary.
-- Real Linux agent-to-server integration testing.
-- Tenant-scoped dashboard queries and historical retrieval.
-- Monitoring, alerting, incident handling, and operations.
-- Commercial deployment security and launch approval.
+- Authenticated HTTPS telemetry ingestion endpoint.
+- Machine authentication and ingress rate limiting.
+- Safe machine-credential handling.
+- Real Linux agent-to-server integration.
+- Tenant-scoped monitoring and historical retrieval.
+- Production observability, incident response, and operations.
+- Commercial security and launch approval.
 
-## 8. Decision
+## 10. Decision
 
-D15B behavioral and permission-gate rehearsals: PASSED.
+D15B source verification: PASSED.
 
-D15B migration lifecycle and final security approval: PENDING.
+D15B database and privilege rehearsal: PASSED.
+
+D15B atomic rollback and receipt tests: PASSED.
+
+D15B controlled disposable installation rehearsal: PASSED.
+
+D15B production deployment approval: PENDING.
 
 Public SaaS launch: NO_GO.
