@@ -61,12 +61,12 @@ BEGIN
       'D15B_RELEASE_NO_GO: installation receipt unprotected';
   END IF;
 
-  IF has_table_privilege(
+  IF has_any_column_privilege(
        'pulse_metrics_app',
        'pulse_telemetry_ingestion.schema_migrations',
        'SELECT'
      )
-     OR has_table_privilege(
+     OR has_any_column_privilege(
        'pulse_metrics_app',
        'pulse_telemetry_ingestion.schema_migrations',
        'INSERT'
@@ -97,7 +97,7 @@ BEGIN
        'public.telemetry_samples',
        'INSERT'
      )
-     OR has_table_privilege(
+     OR has_any_column_privilege(
        'pulse_metrics_app',
        'public.telemetry_samples',
        'UPDATE'
@@ -117,17 +117,17 @@ BEGIN
       'D15B_RELEASE_NO_GO: unsafe telemetry application grants';
   END IF;
 
-  IF has_table_privilege(
+  IF has_any_column_privilege(
        'pulse_metrics_app',
        'public.agent_credentials',
        'SELECT'
      )
-     OR has_table_privilege(
+     OR has_any_column_privilege(
        'pulse_metrics_app',
        'pulse_telemetry_ingestion.submissions',
        'SELECT'
      )
-     OR has_table_privilege(
+     OR has_any_column_privilege(
        'pulse_metrics_app',
        'pulse_telemetry_ingestion.submissions',
        'INSERT'
@@ -136,6 +136,43 @@ BEGIN
     RAISE EXCEPTION
       'D15B_RELEASE_NO_GO: protected credential or receipt access';
   END IF;
+
+  -- Reject effective column-level modifications to
+  -- credentials, agent state, and private receipts.
+  IF has_any_column_privilege(
+       'pulse_metrics_app',
+       'public.agent_credentials',
+       'UPDATE'
+     )
+     OR has_any_column_privilege(
+       'pulse_metrics_app',
+       'public.monitored_agents',
+       'UPDATE'
+     )
+     OR has_any_column_privilege(
+       'pulse_metrics_app',
+       'pulse_telemetry_ingestion.submissions',
+       'UPDATE'
+     )
+     OR has_any_column_privilege(
+       'pulse_metrics_app',
+       'pulse_telemetry_ingestion.schema_migrations',
+       'UPDATE'
+     ) THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: protected column modification';
+  END IF;
+  -- The ordinary API runtime must not assume any other role.
+  -- This also rejects NOINHERIT memberships permitting SET ROLE.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_auth_members
+    WHERE member = 'pulse_metrics_app'::regrole
+  ) THEN
+    RAISE EXCEPTION
+      'D15B_RELEASE_NO_GO: unexpected application role membership';
+  END IF;
+
 
   IF pg_has_role(
        'pulse_metrics_app',

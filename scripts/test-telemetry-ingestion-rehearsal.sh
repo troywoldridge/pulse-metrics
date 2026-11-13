@@ -985,6 +985,125 @@ echo 'PASS: restored installation receipt accepted'
 
 
 
+echo '========== D15B COLUMN UPDATE GRANT REJECTION =========='
+
+psql_admin pulse_metrics -q -c '
+  GRANT UPDATE (cpu_usage_percent)
+  ON public.telemetry_samples
+  TO pulse_metrics_app;
+'
+
+if COLUMN_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'Release gate accepted column-level telemetry UPDATE'
+fi
+
+if [[ "$COLUMN_OUTPUT" != *"D15B_RELEASE_NO_GO: unsafe telemetry application grants"* ]]; then
+  printf '%s\n' "$COLUMN_OUTPUT"
+  fail 'Column UPDATE rejected for unexpected reason'
+fi
+
+echo 'PASS: unsafe telemetry column UPDATE rejected'
+
+psql_admin pulse_metrics -q -c '
+  REVOKE UPDATE (cpu_usage_percent)
+  ON public.telemetry_samples
+  FROM pulse_metrics_app;
+'
+
+echo '========== D15B CREDENTIAL COLUMN EXPOSURE TEST =========='
+
+psql_admin pulse_metrics -q -c '
+  GRANT SELECT (token_hash)
+  ON public.agent_credentials
+  TO pulse_metrics_app;
+'
+
+if COLUMN_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'Release gate accepted credential hash column SELECT'
+fi
+
+if [[ "$COLUMN_OUTPUT" != *"D15B_RELEASE_NO_GO: protected credential or receipt access"* ]]; then
+  printf '%s\n' "$COLUMN_OUTPUT"
+  fail 'Credential column exposure rejected for unexpected reason'
+fi
+
+echo 'PASS: credential hash column SELECT rejected'
+
+psql_admin pulse_metrics -q -c '
+  REVOKE SELECT (token_hash)
+  ON public.agent_credentials
+  FROM pulse_metrics_app;
+'
+
+echo '========== D15B RESTORED COLUMN PERMISSIONS =========='
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: release gate accepts restored secure column permissions'
+
+echo '========== D15B NON-INHERITING ROLE MEMBERSHIP TEST =========='
+
+# Synthetic role exists only inside the disposable cluster.
+psql_admin pulse_metrics -q <<'SQLROLE'
+CREATE ROLE pulse_d15b_role_switch_probe NOLOGIN NOINHERIT;
+
+GRANT UPDATE (cpu_usage_percent)
+ON public.telemetry_samples
+TO pulse_d15b_role_switch_probe;
+
+GRANT pulse_d15b_role_switch_probe
+TO pulse_metrics_app
+WITH INHERIT FALSE, SET TRUE;
+SQLROLE
+
+# Effective privilege tests alone must not be the only defense:
+# the app may be able to SET ROLE even without inherited privileges.
+if ROLE_OUTPUT="$(psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql 2>&1)"; then
+  fail 'Release gate accepted unsafe role-switching membership'
+fi
+
+if [[ "$ROLE_OUTPUT" != *"D15B_RELEASE_NO_GO: unexpected application role membership"* ]]; then
+  printf '%s\n' "$ROLE_OUTPUT"
+  fail 'Role-switching test failed for unexpected reason'
+fi
+
+echo 'PASS: non-inheriting role-switching membership rejected'
+
+# Verify PostgreSQL recognizes the role-switching permission.
+ROLE_SWITCH="$(psql_admin pulse_metrics -Atq -c "
+  SELECT pg_has_role(
+    'pulse_metrics_app',
+    'pulse_d15b_role_switch_probe',
+    'SET'
+  );
+")"
+
+[[ "$ROLE_SWITCH" == 't' ]] ||
+  fail 'Synthetic SET ROLE permission was not established'
+
+echo 'PASS: synthetic role-switching permission confirmed'
+
+# Restore the isolated test database.
+psql_admin pulse_metrics -q <<'SQLROLE'
+REVOKE pulse_d15b_role_switch_probe
+FROM pulse_metrics_app;
+
+REVOKE UPDATE (cpu_usage_percent)
+ON public.telemetry_samples
+FROM pulse_d15b_role_switch_probe;
+
+DROP ROLE pulse_d15b_role_switch_probe;
+SQLROLE
+
+psql_admin pulse_metrics -q \
+  < scripts/telemetry-ingestion/release-permission-gate.sql
+
+echo 'PASS: restored application role permissions audited'
+
 echo '========== CHECK DEVELOPMENT DATABASE UNCHANGED =========='
 
 AFTER="$(sudo -u postgres psql -X -v ON_ERROR_STOP=1 -Atq \
