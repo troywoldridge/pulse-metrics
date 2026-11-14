@@ -1,0 +1,103 @@
+{
+  "schema": "pulse-maintenance-release-gates/v1",
+  "purpose": "design_only_unverified_evidence_inventory",
+  "launchStatus": "NO_GO",
+  "gates": [
+    {
+      "id": "deployment_platform_selected",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "production_network_segmentation",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "dedicated_workload_identity",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "database_tls_identity_verification",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "maintenance_function_grant_audit",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "independent_custody_account_and_retention",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "external_signing_key_lifecycle",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "atomic_outbox_and_replay_uniqueness",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "authenticated_operator_step_up_and_revocation",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "dual_control_and_manual_recovery",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "independent_human_acknowledgement",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "alert_transport_and_dead_letter_drill",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "encrypted_backup_pitr_and_restore",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "incident_response_and_kill_switch",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "tenant_and_negative_security_integration",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    },
+    {
+      "id": "production_change_approval_and_rollback",
+      "status": "external_verification_required",
+      "evidenceReference": null,
+      "externalReviewer": null
+    }
+  ]
+}
