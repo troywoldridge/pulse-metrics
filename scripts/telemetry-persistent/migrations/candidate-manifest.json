@@ -1,0 +1,28 @@
+{
+  "releaseCandidate": "D15C-5U-2C",
+  "authorization": "NOT_APPROVED_FOR_INSTALLATION",
+  "databaseTarget": "dedicated-development-only",
+  "migrations": [
+    {
+      "label": "network-quota",
+      "source": "scripts/telemetry-quota/migrations/0001_telemetry_network_quota.sql",
+      "sourceSha256": "4cce6ab1a31d4f0f323e6c5ad380b46fc21f1611198b44cf914b74118e29afe8",
+      "candidate": "scripts/telemetry-persistent/migrations/0001_network_quota_dev_candidate.sql",
+      "candidateSha256": "ae3c2809d8126b1cf17340a3d4bc27d6fc5a55aa95a3e17723d57790f78b8868"
+    },
+    {
+      "label": "agent-quota",
+      "source": "scripts/telemetry-agent-quota/migrations/0001_telemetry_agent_quota.sql",
+      "sourceSha256": "a90ec4b3c0b83c53b147d0160ab589cf673bfb032898b46075ce9c0b28f5f012",
+      "candidate": "scripts/telemetry-persistent/migrations/0002_agent_quota_dev_candidate.sql",
+      "candidateSha256": "ee65a252955a01aa60a021d56e3f8b24e3cf4dbb670bfde2e1de0e547f17a73a"
+    },
+    {
+      "label": "credential-outcome",
+      "source": "scripts/telemetry-auth-outcome/migrations/0002_machine_credential_rejection.sql",
+      "sourceSha256": "3061f797a7d1fa0dfb335130252c4d89a3d1ee50d263854a22caa2a6c4d8c771",
+      "candidate": "scripts/telemetry-persistent/migrations/0003_credential_outcome_dev_candidate.sql",
+      "candidateSha256": "740206f5549d5bd42f5e0214cb2508783b55885d560d316db4de18d322cfe156"
+    }
+  ]
+}
