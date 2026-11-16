@@ -36,6 +36,7 @@ import {
   createPostgresTelemetryIngestionGateway,
 } from '../../src/server/telemetry/postgres-ingestion.ts';
 import { MAX_INGESTION_BYTES } from '../../src/server/telemetry/normalize-ingestion.ts';
+import { readDisposableTenantHistory } from './disposable-tenant-history.mjs';
 
 const { Pool } = pg;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -230,6 +231,51 @@ async function main() {
       organizationId: orgB,
     }), 'invalid_request');
     console.log('PASS: two organizations independently persisted same UUID; forged tenant selector refused');
+
+    stage = 'read-only membership-bound RLS history of genuine Linux samples';
+    // The synthetic identities were created by the disposable baseline.
+    // This is NOT a WorkOS authentication test and is never a live route.
+    const ownerA = (await pool.query(
+      'SELECT public.resolve_workos_user($1::text) AS id',
+      ['user_agent_owner_a'],
+    )).rows[0]?.id;
+    const ownerB = (await pool.query(
+      'SELECT public.resolve_workos_user($1::text) AS id',
+      ['user_agent_owner_b'],
+    )).rows[0]?.id;
+    assert.match(ownerA ?? '', UUID);
+    assert.match(ownerB ?? '', UUID);
+    assert.notEqual(ownerA, ownerB);
+
+    const historyA = await readDisposableTenantHistory(pool, {
+      userId: ownerA, organizationId: orgA, agentId: a.agentId,
+    });
+    const historyB = await readDisposableTenantHistory(pool, {
+      userId: ownerB, organizationId: orgB, agentId: b.agentId,
+    });
+    assert.equal(historyA.authorized, true);
+    assert.equal(historyA.agentFound, true);
+    assert.equal(historyA.samples.length, 1);
+    assert.equal(historyB.authorized, true);
+    assert.equal(historyB.agentFound, true);
+    assert.equal(historyB.samples.length, 1);
+    assert.ok(historyA.samples[0].recorded_at instanceof Date);
+    assert.ok(historyB.samples[0].recorded_at instanceof Date);
+    assert.deepEqual(Object.keys(historyA.samples[0]).sort(), [
+      'recorded_at', 'received_at', 'cpu_usage_percent',
+      'memory_usage_percent', 'disk_usage_percent',
+      'network_receive_bytes_per_second', 'network_transmit_bytes_per_second',
+    ].sort());
+    assert.deepEqual(await readDisposableTenantHistory(pool, {
+      userId: ownerA, organizationId: orgB, agentId: b.agentId,
+    }), { authorized: false, agentFound: false, samples: [] });
+    assert.deepEqual(await readDisposableTenantHistory(pool, {
+      userId: ownerB, organizationId: orgA, agentId: a.agentId,
+    }), { authorized: false, agentFound: false, samples: [] });
+    assert.deepEqual(await readDisposableTenantHistory(pool, {
+      userId: ownerA, organizationId: orgA, agentId: b.agentId,
+    }), { authorized: true, agentFound: false, samples: [] });
+    console.log('PASS: genuine Linux sample history visible only to verified tenant member/agent; no pooled context leak');
 
     stage = 'unknown and revoked machine credential rejection';
     const unknown = makeCredential();
