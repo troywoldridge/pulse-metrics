@@ -130,3 +130,9 @@ RESULT="$(psql_disposable_admin pulse_metrics -c "
 ")" || refuse 'Post-restart privileged count audit failed'
 [[ "$RESULT" == '246|246|2' ]] || refuse 'Persisted sample or submission ledger changed across restart'
 echo 'PASS: 246 durable samples and submissions, including two genuine Linux records, survived restart'
+
+# D15C-5U-2F2F — independent READ-ONLY nonzero ledger contract after
+# the previously verified real PostgreSQL restart.  This helper can target
+# only the disposable port 55432 rehearsal, never protected persistent 55433.
+PULSE_D15C5T_RESTART_VERIFIED=YES \
+  bash scripts/telemetry-persistent/rehearse-nonzero-pilot-audit.sh --audit-disposable
